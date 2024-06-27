@@ -5,6 +5,19 @@ import xarray as xr
 import rasterio
 from rasterio.windows import Window
 from cupyx.scipy.interpolate import RegularGridInterpolator
+from decorator import decorator
+from line_profiler import LineProfiler
+
+
+@decorator
+def profile_each_line(func, *args, **kwargs):
+    profiler = LineProfiler()
+    profiled_func = profiler(func)
+    try:
+        profiled_func(*args, **kwargs)
+    finally:
+        profiler.print_stats()
+
 
 # import pandas as pd
 # import geopandas as gpd
@@ -67,6 +80,22 @@ def compute_zonal_statistics(groups, area_values, population_values, sorted=Fals
     return aggs
 
 
+# @profile_each_line
+def get_interpolate_xy(era5_da, adm_id_da):
+
+    # Define the grid
+    lat = cp.asarray(era5_da.y.values)
+    lon = cp.asarray(era5_da.x.values)
+    era5_original_grid = (lat, lon)
+
+    # New grid based on adm_id_da
+    new_lat = cp.asarray(adm_id_da.y)
+    new_lon = cp.asarray(adm_id_da.x)
+    era5_new_grid = np.meshgrid(new_lat, new_lon, indexing="ij")
+
+    return era5_original_grid, era5_new_grid
+
+
 def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     """Interpolate ERA5 data to the adm_id_da grid using cupy and cupyx
 
@@ -90,16 +119,16 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
 
     ## Interpolate droughts like adm_id_da
     # Define the grid
-    lat = cp.asarray(era5_da.y.values, dtype="float32")
-    lon = cp.asarray(era5_da.x.values, dtype="float32")
+    lat = cp.asarray(era5_da.y.values)
+    lon = cp.asarray(era5_da.x.values)
     spi = cp.asarray(era5_da.values, dtype="bool")
     interpolate = RegularGridInterpolator(
         (lat, lon), spi, method="nearest", bounds_error=False
     )
 
     # Interpolate
-    new_lat = cp.asarray(adm_id_da.y, dtype="float32")
-    new_lon = cp.asarray(adm_id_da.x, dtype="float32")
+    new_lat = cp.asarray(adm_id_da.y)
+    new_lon = cp.asarray(adm_id_da.x)
     new_lat, new_lon = np.meshgrid(new_lat, new_lon, indexing="ij")
     era5_interp = interpolate((new_lat, new_lon))
     print(era5_interp.shape)
