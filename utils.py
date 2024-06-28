@@ -131,7 +131,7 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     new_lon = cp.asarray(adm_id_da.x)
     new_lat, new_lon = np.meshgrid(new_lat, new_lon, indexing="ij")
     era5_interp = interpolate((new_lat, new_lon))
-    print(era5_interp.shape)
+
     if verbose:
         t1 = time.time()
         print(f"Time Interp (cupyx.scipy): {t1 - t0}")
