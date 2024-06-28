@@ -32,6 +32,8 @@
 *.tex
 *.jpg
 *.ai
+*.parquet
+*.feather
 !Data/Data_Raw/Country codes & metadata/*
 !UML long.png
 !HCP_logo.png
