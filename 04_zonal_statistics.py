@@ -46,12 +46,19 @@ def get_bounds_from_chunk_number(chunk_number, total_chunks=8):
     y_max = 90
 
     # Calculate the bounding box coordinates for the given chunk number
-    x_step = (x_max - x_min) / total_chunks / 2
-    y_step = (y_max - y_min) / total_chunks / 2
+    side_chunks = np.sqrt(total_chunks)
+    if not side_chunks.is_integer():
+        raise ValueError("Total chunks must be a square number.")
+    side_chunks = int(side_chunks)
 
-    left = x_min + chunk_number * x_step
+    chunk_position = np.unravel_index(chunk_number, (side_chunks, side_chunks))
+
+    x_step = (x_max - x_min) / side_chunks
+    y_step = (y_max - y_min) / side_chunks
+
+    left = x_min + chunk_position[0] * x_step
     right = left + x_step
-    bottom = y_min + chunk_number * y_step
+    bottom = y_min + chunk_position[1] * y_step
     top = bottom + y_step
 
     return (left, bottom, right, top)
@@ -126,82 +133,78 @@ droughts = xr.open_dataset(rf"/mnt/e/client_v2_data/ERA5_droughts_1970-2021.nc")
 ### Run process
 
 # Loop over chunks
-chunk_number = 2
-chunk_bounds = get_bounds_from_chunk_number(chunk_number, total_chunks=4)
-chunk_droughts = droughts.sel(
-    x=slice(chunk_bounds[0], chunk_bounds[2]), y=slice(chunk_bounds[3], chunk_bounds[1])
-).load()
-chunk_adm_id = adm_id_full.sel(
-    x=slice(chunk_bounds[0], chunk_bounds[2]), y=slice(chunk_bounds[3], chunk_bounds[1])
-)
-# Note: data in this NC file will query faster if chunked in the same way as the data is stored
-#   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
-#   send to cupy faster.
-print("chunk_bounds:", chunk_adm_id)
+total_chunks = 16
+for chunk_number in tqdm(range(total_chunks)):
+    chunk_start_time = time.time()
+    # print("###########################################################")
+    # print(f"#######    Chunk number: {chunk_number} out of {total_chunks}    #######")
+    # print("###########################################################")
 
+    chunk_bounds = get_bounds_from_chunk_number(chunk_number, total_chunks=total_chunks)
+    chunk_droughts = droughts.sel(
+        x=slice(chunk_bounds[0], chunk_bounds[2]),
+        y=slice(chunk_bounds[3], chunk_bounds[1]),
+    ).load()
+    chunk_adm_id = adm_id_full.sel(
+        x=slice(chunk_bounds[0], chunk_bounds[2]),
+        y=slice(chunk_bounds[3], chunk_bounds[1]),
+    ).load()
+    # Note: data in this NC file will query faster if chunked in the same way as the data is stored
+    #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
+    #   send to cupy faster.
+    if chunk_adm_id.notnull().sum() == 0:
+        print("No data in this chunk, skipping...")
+        continue
 
-# Loop over years
-year = 1995
-gpw_year_prev = 0
-chunk_year_drought = chunk_droughts.sel(year=year)
+    for year in tqdm(range(1970, 2021), leave=False):
+        # Loop over years
+        gpw_year_prev = 0
+        chunk_year_drought = chunk_droughts.sel(year=year)
 
-gpw_year = find_gpw_closes_year(year)
-if gpw_year != gpw_year_prev:
-    chunk_year_gpw = load_gpw_data(
-        gpw_year, bounds=chunk_bounds
-    )  # left, bottom, right, top
-# FIXME: Aca debería agregar un check de que las tres bases tengan tamaños similares
+        gpw_year = find_gpw_closes_year(year)
+        if gpw_year != gpw_year_prev:
+            chunk_year_gpw = load_gpw_data(
+                gpw_year, bounds=chunk_bounds
+            )  # left, bottom, right, top
 
-print("chunk_year_drought", chunk_year_drought)
-print()
-print("chunk_year_gpw:", chunk_year_gpw)
-print()
-print("chunk_adm_id:", chunk_adm_id)
+        start = time.time()
+        # Loop over variables
+        for var in tqdm(droughts.data_vars, leave=False):
 
-# Loop over variables
-for var in tqdm(droughts.data_vars):
-    t1 = time.time()
-    # Select indicator, year and region
-    print(0)
-    ### Interpolate
-    datavar_interp = utils.intepolate_era5_data(
-        chunk_year_drought[var],
-        chunk_adm_id,
-        verbose=False,
-    )
+            # Select indicator, year and region
+            ### Interpolate
+            datavar_interp = utils.intepolate_era5_data(
+                chunk_year_drought[var],
+                chunk_adm_id,
+                verbose=False,
+            )
 
-    ### Groupby
-    t0 = time.time()
-    groups = cp.asarray(chunk_adm_id.values.flatten())
-    t1 = time.time()
-    print(t1 - t0)
-    population_values = cp.asarray(chunk_year_gpw.flatten())
-    t2 = time.time()
-    print(t2 - t1)
-    area_values = datavar_interp.flatten()
-    t3 = time.time()
-    print(t3 - t2)
-    del datavar_interp
-    # print(groups.shape, area_values.shape, population_values.shape)
-    assert groups.shape == area_values.shape == population_values.shape
+            ### Groupby
+            groups = cp.asarray(chunk_adm_id.values.flatten())
+            population_values = cp.asarray(chunk_year_gpw.flatten())
+            area_values = datavar_interp.flatten()
+            del datavar_interp
+            assert (
+                groups.shape == area_values.shape == population_values.shape
+            ), f"There's something wrong with the shapes of the data, they all must match: {groups.shape}, {area_values.shape}, {population_values.shape}"
 
-    aggs = utils.compute_zonal_statistics(groups, area_values, population_values)
-    t4 = time.time()
-    print(t4 - t3)
-    pd.DataFrame.from_dict(
-        aggs,
-        orient="index",
-        columns=[
-            "area_affected",
-            "cells_affected",
-            "total_cells",
-            "population_affected",
-            "population_affected_n",
-            "total_population",
-        ],
-    ).to_parquet(rf"{DATA_PROC}/shocks/{var}_{year}_{chunk_number}_zonal_stats.parquet")
-    print(time.time() - t4)
-    t2 = time.time()
-    print(f"Loop time: {t2 - t1}")
+            aggs = utils.compute_zonal_statistics(
+                groups, area_values, population_values
+            )
+            pd.DataFrame.from_dict(
+                aggs,
+                orient="index",
+                columns=[
+                    "area_affected",
+                    "cells_affected",
+                    "total_cells",
+                    "population_affected",
+                    "population_affected_n",
+                    "total_population",
+                ],
+            ).to_parquet(
+                rf"{DATA_PROC}/shocks/{var}_{year}_{chunk_number}_zonal_stats.parquet"
+            )
 
-print(f"Total Time: {t2 - t0}")
+    chunk_end = time.time()
+    print(f"Total chunk Time: {chunk_end - chunk_start_time}")
