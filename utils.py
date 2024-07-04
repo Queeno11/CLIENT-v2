@@ -25,7 +25,48 @@ def profile_each_line(func, *args, **kwargs):
 # import seaborn as sns
 
 
-def compute_zonal_statistics(groups, area_values, population_values, sorted=False):
+def compute_zonal_statistics(datavar, adm_id, year_gpw):
+    """Compute zonal statistics using CuPy.
+
+    Parameters:
+    -----------
+    datavar: xarray.DataArray
+        Data to be aggregated.
+    adm_id: xarray.DataArray
+        Administrative data to group the data.
+    year_gpw: xarray.DataArray
+        Population data to weight the aggregation.
+
+    Returns:
+    --------
+    pandas.DataFrame: Zonal statistics aggregated by administrative unit.
+    """
+
+    groups = cp.asarray(adm_id.values.flatten())
+    population_values = cp.asarray(year_gpw.flatten())
+    area_values = cp.asarray(datavar.flatten())
+
+    assert (
+        groups.shape == area_values.shape == population_values.shape
+    ), f"There's something wrong with the shapes of the data, they all must match: {groups.shape}, {area_values.shape}, {population_values.shape}"
+
+    aggs = groupby_mean_cupy(groups, area_values, population_values)
+    df = pd.DataFrame.from_dict(
+        aggs,
+        orient="index",
+        columns=[
+            "area_affected",
+            "cells_affected",
+            "total_cells",
+            "population_affected",
+            "population_affected_n",
+            "total_population",
+        ],
+    )
+    return df
+
+
+def groupby_mean_cupy(groups, area_values, population_values, sorted=False):
     """Groupby mean function using cupy. Data doesn't have to be sorted.
 
     Parameters:
@@ -302,10 +343,16 @@ def identify_needed_transformations(shock, adm_data):
     has_smaller_shape = all(x < y for x, y in zip(shock_dims, full_30arc_sec_shape))
 
     needs_crop = has_full_shape
-    needs_interp = ~has_cropped_shape and ~has_full_shape and has_smaller_shape
-    need_coarsen = ~has_cropped_shape and ~has_full_shape and ~has_smaller_shape
+    needs_interp = (
+        (not has_cropped_shape) and (not has_full_shape) and has_smaller_shape
+    )
+    need_coarsen = (
+        (not has_cropped_shape) and (not has_full_shape) and (not has_smaller_shape)
+    )
 
     if need_coarsen:
+        print(has_cropped_shape, has_full_shape, has_smaller_shape)
+        print(shock_dims, cropped_shape)
         raise NotImplementedError(
             "Coarsening is not implemented yet. Reduce the x, y dimensions of the data to match the Gridded Population of the World 30arc-sec grid before running this script."
         )
