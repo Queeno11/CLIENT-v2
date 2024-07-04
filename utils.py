@@ -2,6 +2,7 @@ import time
 import cupy as cp
 import numpy as np
 import xarray as xr
+import pandas as pd
 import rasterio
 from rasterio.windows import Window
 from cupyx.scipy.interpolate import RegularGridInterpolator
@@ -17,12 +18,6 @@ def profile_each_line(func, *args, **kwargs):
         profiled_func(*args, **kwargs)
     finally:
         profiler.print_stats()
-
-
-# import pandas as pd
-# import geopandas as gpd
-# import matplotlib.pyplot as plt
-# import seaborn as sns
 
 
 def compute_zonal_statistics(datavar, adm_id, year_gpw):
@@ -357,7 +352,7 @@ def identify_needed_transformations(shock, adm_data):
             "Coarsening is not implemented yet. Reduce the x, y dimensions of the data to match the Gridded Population of the World 30arc-sec grid before running this script."
         )
     if needs_crop:
-        print("Cropping data...")
+        print("Data will be cropped to match the administrative/GPW data...")
         shock = shock.sel(
             x=slice(adm_data.x.min(), adm_data.x.max()),
             y=slice(adm_data.y.max(), adm_data.y.min()),
