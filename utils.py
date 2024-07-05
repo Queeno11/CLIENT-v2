@@ -1,9 +1,12 @@
+import re
+import os
 import time
 import cupy as cp
 import numpy as np
 import xarray as xr
 import pandas as pd
 import rasterio
+from tqdm import tqdm
 from rasterio.windows import Window
 from cupyx.scipy.interpolate import RegularGridInterpolator
 from decorator import decorator
@@ -70,7 +73,6 @@ def groupby_mean_cupy(groups, area_values, population_values, sorted=False):
         Data to be grouped by the first column.
     values: cp.array of shape (n, 1)
         Data to be averaged according to groups.
-
     """
     # Remove rows with NaNs
     mask = ~cp.isnan(groups) & ~cp.isnan(area_values)
@@ -299,6 +301,9 @@ def load_gpw_data(year, bounds=None):
                 transform=src.transform,
             )
         data = src.read(1, window=window)  # Assuming single band, read the first band
+        # Verify we've loaded data
+        assert data is not None, "No data loaded from the GPW raster."
+
         # Convert the NumPy array to a CuPy array
         gpw = cp.asarray(data, dtype=np.uint32)
 
@@ -346,8 +351,6 @@ def identify_needed_transformations(shock, adm_data):
     )
 
     if need_coarsen:
-        print(has_cropped_shape, has_full_shape, has_smaller_shape)
-        print(shock_dims, cropped_shape)
         raise NotImplementedError(
             "Coarsening is not implemented yet. Reduce the x, y dimensions of the data to match the Gridded Population of the World 30arc-sec grid before running this script."
         )
@@ -359,3 +362,142 @@ def identify_needed_transformations(shock, adm_data):
         )
 
     return shock, needs_interp, need_coarsen
+
+
+def parse_filename(f, shockname):
+    """Parse the filename to extract the variable, threshold, year and chunk
+
+    Parameters:
+    ----------
+    f : str
+        Filename to parse
+
+    Returns:
+    -------
+    dict
+        Dictionary with the following keys:
+            - variable: str
+            - threshold: str
+            - year: str
+    """
+
+    f = f.split("_")
+    if shockname == "drought":
+        return {
+            "variable": f[1],
+            "threshold": f"{f[2]}_{f[3]}",
+            "year": f[4],
+            "chunk": f[5],
+        }
+    elif shockname == "floods":
+        return {
+            "variable": f[1],
+            "year": f[2],
+            "chunk": f[3],
+            "threshold": "",
+        }
+
+
+def process_chunk(df):
+    """Process the dataframe generated from zonal_statistics
+
+    Parameters:
+    ----------
+    df : pd.DataFrame
+        Dataframe to process
+
+    Returns:
+    -------
+    df : pd.DataFrame
+        Processed dataframe
+    """
+    df = df.reset_index(names=["ID"])
+    df["threshold"] = df["threshold"].str.replace("_", "")
+    df["variable"] = df["variable"].str.replace("-", "")
+    df["name"] = df["variable"].str.lower() + df["threshold"].astype(str)
+    df = df.drop(
+        columns=[
+            "area_affected",
+            "population_affected",
+            "variable",
+            "threshold",
+            "chunk",
+        ]
+    )
+    return df
+
+
+def parse_columns(names: tuple):
+    agg = names[0]
+    string = names[1]
+    letter = agg[0]
+
+    return f"{string}_{letter}"
+
+
+def process_all_dataframes(gdf, parquet_paths, shockname):
+
+    gdf.columns = [col.lower() for col in gdf.columns]
+
+    files = os.listdir(parquet_paths)
+    files = [f for f in files if f.endswith(".parquet") and shockname in f]
+
+    dfs = []
+    for f in tqdm(files):
+        df = pd.read_parquet(os.path.join(parquet_paths, f))
+        # Agrego como cols la variable, threshold, year y chunk
+        names = parse_filename(f, shockname)
+        df[list(names.keys())] = list(names.values())
+        # Proceso el chunk
+        dfs += [process_chunk(df)]
+
+    # Concatenate all the dataframes and create the shock variables
+    df = pd.concat(dfs)
+    df = df.groupby(["ID", "name", "year"]).sum()
+    df["area_affected"] = df["cells_affected"] / df["total_cells"]
+    df["population_affected"] = df["population_affected_n"] / df["total_population"]
+    df = (
+        df.drop(
+            columns=[
+                "cells_affected",
+                "total_cells",
+                "population_affected_n",
+                "total_population",
+            ]
+        )
+        .reset_index()
+        .fillna(0)
+        .replace([np.inf, -np.inf], 0)
+    )
+
+    # Pivot data: every shock has to be a column
+    pivot = df.pivot(
+        index=["ID", "year"],
+        columns="name",
+        values=["population_affected", "area_affected"],
+    )
+
+    # Reindex the two-level columns pivot returns
+    newcols = []
+    for cols in pivot.columns:
+        newcols += [parse_columns(cols)]
+    pivot.columns = newcols
+    pivot = pivot.reset_index()
+
+    # Add the data to the gdf
+    out_df = gdf.merge(pivot, left_on="id", right_on="ID", validate="1:m", how="outer")
+    out_df.rename(
+        columns={
+            "adm0_code": "adm0",
+            "admlast_code": "adm_lst",
+        },
+        inplace=True,
+    )
+
+    return out_df, newcols
+
+def coordinates_from_0_360_to_180_180(ds):
+    ds["x"] = ds.x - 180
+    ds["x"] = ds.x.where(ds.x > -180, ds.x + 360)
+    ds = ds.sortby("x")
+    return ds

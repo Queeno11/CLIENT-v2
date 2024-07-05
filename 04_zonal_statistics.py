@@ -1,8 +1,10 @@
+import os
 import time
 import cupy as cp
 import numpy as np
 import xarray as xr
 import pandas as pd
+import geopandas as gpd
 import utils
 from tqdm import tqdm
 
@@ -15,28 +17,29 @@ PATH = "/mnt/d/World Bank/CLIENT v2"
 DATA_RAW = rf"{PATH}/Data/Data_raw"
 DATA_PROC = rf"{PATH}/Data/Data_proc"
 DATA_OUT = rf"{PATH}/Data/Data_out"
-TOTAL_CHUNKS = 4
+TOTAL_CHUNKS = 16
+PARQUET_PATH = rf"{DATA_PROC}/shocks"
 print("Loading data...")
 
-t0 = time.time()
-### Global Loads
-## ADM boundaries data (load the full dataset because I'll iterate over it all the times)
-adm_id_full = xr.open_dataset(rf"/mnt/e/client_v2_data/WB_country_grid.nc")["ID"].load()
+## Global Loads
+# ADM boundaries data (load the full dataset because I'll iterate over it all the times)
+adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"].load()
 
-## Load all shocks data
-droughts = xr.open_dataset(
-    rf"/mnt/d/World Bank/CLIENT v2/Data/Data_out/ERA5_droughts_yearly.nc"
+# Shock
+droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc")
+floods = xr.open_dataset(rf"{DATA_OUT}/GPW_floods_yearly.nc").rename(
+    {"band_data": "flooded"}
 )
-floods = xr.open_dataset(
-    rf"/mnt/d/World Bank/CLIENT v2/Data/Data_out/GPW_floods_yearly.nc"
-).rename({"band_data": "flooded"})
 
-shocks = [floods]
+shocks = {
+    "drought": droughts,
+    "floods": floods,
+}
 
 ### Run process
-for i, shock in enumerate(shocks):
+for shockname, shock in shocks.items():
 
-    print(f"Processing shock {i}...")
+    print(f"Processing {shockname}...")
 
     shock, needs_interp, need_coarsen = utils.identify_needed_transformations(
         shock, adm_id_full
@@ -91,8 +94,20 @@ for i, shock in enumerate(shocks):
                     datavar, chunk_adm_id, chunk_year_gpw
                 )
                 df.to_parquet(
-                    rf"{DATA_PROC}/shocks/{var}_{year}_{chunk_number}_zonal_stats.parquet"
+                    rf"{PARQUET_PATH}/{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
                 )
 
-        chunk_end = time.time()
-        print(f"Total chunk Time: {chunk_end - chunk_start_time}")
+    ## Save shock data
+    # Compile all the dataframes and generate country dtas
+    print("Compiling data...")
+    gdf = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
+    out_df, variables = utils.process_all_dataframes(gdf, PARQUET_PATH, shockname)
+
+    # Export minimal version
+    out_df[["adm0", "adm_lst", "year", "ID"] + variables].to_stata(
+        os.path.join(DATA_OUT, f"{shockname}_by_admlast.dta")
+    )
+    # # Export full version with geometry
+    # out_df.to_feather(
+    #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
+    # )
