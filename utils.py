@@ -39,24 +39,21 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
     --------
     pandas.DataFrame: Zonal statistics aggregated by administrative unit.
     """
-
     groups = cp.asarray(adm_id.values.flatten())
-    population_values = cp.asarray(year_gpw.flatten())
-    area_values = cp.asarray(datavar.flatten())
+    population_values = cp.asarray(year_gpw.flatten(), dtype=np.float32)
+    area_values = cp.asarray(datavar.flatten(), dtype=bool)
 
     assert (
         groups.shape == area_values.shape == population_values.shape
     ), f"There's something wrong with the shapes of the data, they all must match: {groups.shape}, {area_values.shape}, {population_values.shape}"
 
-    aggs = groupby_mean_cupy(groups, area_values, population_values)
+    aggs = groupby_sum_cupy(groups, area_values, population_values)
     df = pd.DataFrame.from_dict(
         aggs,
         orient="index",
         columns=[
-            "area_affected",
             "cells_affected",
             "total_cells",
-            "population_affected",
             "population_affected_n",
             "total_population",
         ],
@@ -64,8 +61,8 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
     return df
 
 
-def groupby_mean_cupy(groups, area_values, population_values, sorted=False):
-    """Groupby mean function using cupy. Data doesn't have to be sorted.
+def groupby_sum_cupy(groups, area_values, population_values, sorted=False):
+    """Groupby sum function using cupy. Data doesn't have to be sorted.
 
     Parameters:
     -----------
@@ -74,41 +71,38 @@ def groupby_mean_cupy(groups, area_values, population_values, sorted=False):
     values: cp.array of shape (n, 1)
         Data to be averaged according to groups.
     """
-    # Remove rows with NaNs
-    mask = ~cp.isnan(groups) & ~cp.isnan(area_values)
+    # Remove rows with NaNs in groups or values
+    mask = (groups != 99999) & ~cp.isnan(area_values)
     groups = groups[mask]
     area_values = area_values[mask]
     population_values = population_values[mask]
+
+    # If population is missing, set it to 0
+    population_values = cp.nan_to_num(population_values)
     del mask
+    print(groups)
+    n_total_area = cp.bincount(groups)
+    n_affected_area = cp.bincount(groups, weights=area_values)
+    n_total_pop = cp.bincount(groups, weights=population_values)
+    n_affected_pop = cp.bincount(groups, weights=population_values * area_values)
 
-    # Sort based on the groups if not already sorted
-    if not sorted:
-        sort_indices = cp.argsort(groups)
-        groups = groups[sort_indices]
-        area_values = area_values[sort_indices]
-        population_values = population_values[sort_indices]
-        del sort_indices
+    assert (
+        n_affected_area
+        <= n_total_area + 0.0001  # 0.0001 is a tolerance for float comparison
+    ).all(), "Affected Arass should be less or eq than total area"
 
-    _id, _pos, g_count = cp.unique(groups, return_index=True, return_counts=True)
-    del groups
-
-    g_area_sum = cp.add.reduceat(area_values, _pos)
-    g_pop_sum = cp.add.reduceat(population_values, _pos)
-    g_affected_pop_sum = cp.add.reduceat(population_values * area_values, _pos)
-    del area_values
-
-    g_area_mean = g_area_sum / g_count
-    g_pop_mean = g_affected_pop_sum / g_pop_sum
+    assert (
+        n_affected_pop
+        <= n_total_pop + 0.0001  # 0.0001 is a tolerance for float comparison
+    ).all(), "Affected Population should be less or eq than total pop"
     aggs = dict(
         zip(
-            cp.asnumpy(_id),
+            cp.asnumpy(groups),
             zip(
-                cp.asnumpy(g_area_mean),
-                cp.asnumpy(g_area_sum),
-                cp.asnumpy(g_count),
-                cp.asnumpy(g_pop_mean),
-                cp.asnumpy(g_affected_pop_sum),
-                cp.asnumpy(g_pop_sum),
+                cp.asnumpy(n_affected_area),
+                cp.asnumpy(n_total_area),
+                cp.asnumpy(n_affected_pop),
+                cp.asnumpy(n_total_pop),
             ),
         )
     )
@@ -177,7 +171,7 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     return era5_interp.astype("bool")
 
 
-def get_bounds_from_chunk_number(chunk_number, total_chunks=8):
+def get_bounds_from_chunk_number(chunk_number, total_chunks=8, canvas=None):
     """Get the bounding box coordinates for a given chunk number.
 
     Data is divided into total_chunks chunks, each covering an 1/total_chunks of the globe.
@@ -188,6 +182,8 @@ def get_bounds_from_chunk_number(chunk_number, total_chunks=8):
         Chunk number < total_chunks.
     total_chunks: int
         Total number of chunks to divide the globe into.
+    canvas: tuple (optional)
+        Bounding box coordinates (left, bottom, right, top) to divide the globe into chunks.
 
     Returns:
     --------
@@ -198,11 +194,10 @@ def get_bounds_from_chunk_number(chunk_number, total_chunks=8):
         raise ValueError("Chunk number must be less than total_chunks.")
 
     # Define the bounding box coordinates for each chunk
-    x_min = -180
-    x_max = 180
-    y_min = -90
-    y_max = 90
-
+    if canvas is None:
+        x_min, y_min, x_max, y_max = -180, -90, 180, 90
+    else:
+        x_min, y_min, x_max, y_max = canvas
     # Calculate the bounding box coordinates for the given chunk number
     side_chunks = np.sqrt(total_chunks)
     if not side_chunks.is_integer():
@@ -222,7 +217,7 @@ def get_bounds_from_chunk_number(chunk_number, total_chunks=8):
     return (left, bottom, right, top)
 
 
-def get_filter_from_chunk_number(chunk_number, total_chunks=8):
+def get_filter_from_chunk_number(chunk_number, total_chunks=8, canvas=None):
     """Get the filter for a given chunk number.
 
     Data is divided into total_chunks chunks, each covering an 1/total_chunks of the globe.
@@ -245,7 +240,9 @@ def get_filter_from_chunk_number(chunk_number, total_chunks=8):
 
     """
 
-    chunk_bounds = get_bounds_from_chunk_number(chunk_number, total_chunks=total_chunks)
+    chunk_bounds = get_bounds_from_chunk_number(
+        chunk_number, total_chunks=total_chunks, canvas=canvas
+    )
     filter = dict(
         x=slice(chunk_bounds[0], chunk_bounds[2]),
         y=slice(chunk_bounds[3], chunk_bounds[1]),
@@ -305,7 +302,7 @@ def load_gpw_data(year, bounds=None):
         assert data is not None, "No data loaded from the GPW raster."
 
         # Convert the NumPy array to a CuPy array
-        gpw = cp.asarray(data, dtype=np.uint32)
+        gpw = cp.asarray(data)
 
     return gpw
 

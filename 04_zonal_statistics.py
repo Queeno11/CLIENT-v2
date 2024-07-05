@@ -19,22 +19,33 @@ DATA_PROC = rf"{PATH}/Data/Data_proc"
 DATA_OUT = rf"{PATH}/Data/Data_out"
 TOTAL_CHUNKS = 16
 PARQUET_PATH = rf"{DATA_PROC}/shocks"
+GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
 print("Loading data...")
 
 ## Global Loads
+# Population data is loaded in the loop
+
+# World Bank country bounds and IDs
+WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
+
 # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
-adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"].load()
+adm_id_full = (
+    xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
+    .fillna(99999)  # Fill with 99999 to avoid float issues
+    .astype(int)
+    .load()
+)
 
 # Shock
 droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc")
 floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
     {"band_data": "flooded"}
 )
-
 shocks = {
     "drought": droughts,
     "floods": floods,
 }
+
 
 ### Run process
 for shockname, shock in shocks.items():
@@ -48,15 +59,14 @@ for shockname, shock in shocks.items():
     ## Loop over chunks
     #   Data is dividied in chunks (sections of the world) to avoid memory issues
     #   and to allow parallel processing. This loop will iterate over every chunk
-    for chunk_number in tqdm(range(TOTAL_CHUNKS)):
+    for chunk_number in tqdm(range(10, TOTAL_CHUNKS)):
         chunk_start_time = time.time()
 
         datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
-            chunk_number, total_chunks=TOTAL_CHUNKS
+            chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
         )
         chunk_shock = shock.sel(datafilter).load()
-        chunk_adm_id = adm_id_full.sel(datafilter).load()
-
+        chunk_adm_id = adm_id_full.sel(datafilter)
         if chunk_adm_id.notnull().sum() == 0:
             print("No data in this chunk, skipping...")
             continue
@@ -71,9 +81,13 @@ for shockname, shock in shocks.items():
 
             gpw_year = utils.find_gpw_closes_year(year)
             if gpw_year != gpw_year_prev:
-                chunk_year_gpw = utils.load_gpw_data(
-                    gpw_year, bounds=chunk_bounds
-                )  # left, bottom, right, top
+                # Load Population data as cupy array
+                chunk_year_gpw = xr.open_dataarray(
+                    rf"{GPW_PATH}/gpw_v4_population_count_rev11_{gpw_year}_30_sec.tif"
+                )
+                chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(datafilter)
+                print(chunk_year_gpw)
+                chunk_year_gpw = cp.asarray(chunk_year_gpw.values)
 
             ## Loop over variables
             for var in tqdm(shock.data_vars, leave=False):
@@ -100,8 +114,7 @@ for shockname, shock in shocks.items():
     ## Save shock data
     # Compile all the dataframes and generate country dtas
     print("Compiling data...")
-    gdf = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
-    out_df, variables = utils.process_all_dataframes(gdf, PARQUET_PATH, shockname)
+    out_df, variables = utils.process_all_dataframes(WB_data, PARQUET_PATH, shockname)
 
     # Export minimal version
     out_df[["adm0", "adm_lst", "year", "ID"] + variables].to_stata(
