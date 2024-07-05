@@ -27,7 +27,7 @@ adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"].load()
 
 # Shock
 droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc")
-floods = xr.open_dataset(rf"{DATA_OUT}/GPW_floods_yearly.nc").rename(
+floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
     {"band_data": "flooded"}
 )
 
