@@ -288,7 +288,7 @@ def load_gpw_data(year, bounds=None):
         raise ValueError("Year must be one of 2000, 2005, 2010, 2015 or 2020.")
 
     with rasterio.open(
-        rf"/mnt/e/client_v2_data/gpw_v4_population_count_rev11_{year}_30_sec_proc.tif",
+        rf"/mnt/d/datasets/Gridded Population of the World/gpw_v4_population_count_rev11_{year}_30_sec.tif",
     ) as src:
         window = None
         if bounds is not None:
@@ -495,6 +495,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     )
 
     return out_df, newcols
+
 
 def coordinates_from_0_360_to_180_180(ds):
     ds["x"] = ds.x - 180
