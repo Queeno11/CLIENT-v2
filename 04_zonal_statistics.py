@@ -86,7 +86,6 @@ for shockname, shock in shocks.items():
                     rf"{GPW_PATH}/gpw_v4_population_count_rev11_{gpw_year}_30_sec.tif"
                 )
                 chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(datafilter)
-                print(chunk_year_gpw)
                 chunk_year_gpw = cp.asarray(chunk_year_gpw.values)
 
             ## Loop over variables

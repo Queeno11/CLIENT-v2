@@ -41,37 +41,13 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
     """
     groups = cp.asarray(adm_id.values.flatten())
     population_values = cp.asarray(year_gpw.flatten(), dtype=np.float32)
-    area_values = cp.asarray(datavar.flatten(), dtype=bool)
+    area_values = cp.asarray(datavar.flatten())
 
     assert (
         groups.shape == area_values.shape == population_values.shape
     ), f"There's something wrong with the shapes of the data, they all must match: {groups.shape}, {area_values.shape}, {population_values.shape}"
 
-    aggs = groupby_sum_cupy(groups, area_values, population_values)
-    df = pd.DataFrame.from_dict(
-        aggs,
-        orient="index",
-        columns=[
-            "cells_affected",
-            "total_cells",
-            "population_affected_n",
-            "total_population",
-        ],
-    )
-    return df
-
-
-def groupby_sum_cupy(groups, area_values, population_values, sorted=False):
-    """Groupby sum function using cupy. Data doesn't have to be sorted.
-
-    Parameters:
-    -----------
-    groups: cp.array of shape (n, 1)
-        Data to be grouped by the first column.
-    values: cp.array of shape (n, 1)
-        Data to be averaged according to groups.
-    """
-    # Remove rows with NaNs in groups or values
+    # Filter out nan values
     mask = (groups != 99999) & ~cp.isnan(area_values)
     groups = groups[mask]
     area_values = area_values[mask]
@@ -79,37 +55,52 @@ def groupby_sum_cupy(groups, area_values, population_values, sorted=False):
 
     # If population is missing, set it to 0
     population_values = cp.nan_to_num(population_values)
-    del mask
-    print(groups)
-    n_total_area = cp.bincount(groups)
-    n_affected_area = cp.bincount(groups, weights=area_values)
-    n_total_pop = cp.bincount(groups, weights=population_values)
-    n_affected_pop = cp.bincount(groups, weights=population_values * area_values)
 
-    assert (
-        n_affected_area
-        <= n_total_area + 0.0001  # 0.0001 is a tolerance for float comparison
-    ).all(), "Affected Arass should be less or eq than total area"
+    # Calculate the weighted sum of affected area and population
+    n_total_area = groupby_sum_cupy(groups, values=None)
+    n_affected_area = groupby_sum_cupy(groups, values=area_values)
+    n_total_pop = groupby_sum_cupy(groups, values=population_values)
+    n_affected_pop = groupby_sum_cupy(groups, values=population_values * area_values)
 
-    assert (
-        n_affected_pop
-        <= n_total_pop + 0.0001  # 0.0001 is a tolerance for float comparison
-    ).all(), "Affected Population should be less or eq than total pop"
-    aggs = dict(
-        zip(
-            cp.asnumpy(groups),
-            zip(
-                cp.asnumpy(n_affected_area),
-                cp.asnumpy(n_total_area),
-                cp.asnumpy(n_affected_pop),
-                cp.asnumpy(n_total_pop),
-            ),
+    cols = {
+        "cells_affected": n_affected_area,
+        "total_cells": n_total_area,
+        "population_affected_n": n_affected_pop,
+        "total_population": n_total_pop,
+    }
+    df = pd.DataFrame()
+    for colname, coldata in cols.items():
+        df = df.join(
+            pd.DataFrame.from_dict(coldata, orient="index", columns=[colname]),
+            how="outer",
         )
+    df = df.fillna(0)
+
+    return df
+
+
+def groupby_sum_cupy(groups, values=None):
+    """Calculate the weighted sum of values based on the groups.
+
+    Parameters:
+    -----------
+    groups: cp.array of shape (n, 1)
+        List of group indices.
+    values: cp.array of shape (n, 1) (optional)
+        List of values to sum. If None, the count for each group is calculated.
+
+    Returns:
+    --------
+    dict: Dictionary with the group indices as keys and the sum as values.
+    """
+
+    n_total_area = cp.bincount(groups, weights=values)
+    unique_values = cp.arange(len(n_total_area))[n_total_area > 0]
+    result = dict(
+        zip(cp.asnumpy(unique_values), cp.asnumpy(n_total_area[unique_values]))
     )
-    # print(g_area_mean)
-    # print(g_pop_mean)
-    # print(aggs)
-    return aggs
+
+    return result
 
 
 # @profile_each_line
