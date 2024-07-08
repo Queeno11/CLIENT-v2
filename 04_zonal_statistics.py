@@ -43,7 +43,7 @@ floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
 )
 shocks = {
     "drought": droughts,
-    "floods": floods,
+    # "floods": floods,
 }
 
 

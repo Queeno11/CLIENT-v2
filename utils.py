@@ -405,8 +405,6 @@ def process_chunk(df):
     df["name"] = df["variable"].str.lower() + df["threshold"].astype(str)
     df = df.drop(
         columns=[
-            "area_affected",
-            "population_affected",
             "variable",
             "threshold",
             "chunk",
