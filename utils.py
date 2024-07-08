@@ -418,7 +418,7 @@ def process_chunk(df):
 
 def parse_columns(names: tuple):
     agg = names[0]
-    string = names[1]
+    string = names[1].replace("-", "")
     letter = agg[0]
 
     return f"{string}_{letter}"
