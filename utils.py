@@ -119,6 +119,10 @@ def get_interpolate_xy(era5_da, adm_id_da):
     return era5_original_grid, era5_new_grid
 
 
+def funcion_de_prueba():
+    return
+
+
 def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     """Interpolate ERA5 data to the adm_id_da grid using cupy and cupyx
 
