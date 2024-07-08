@@ -1,14 +1,18 @@
 import re
 import os
 import time
-import cupy as cp
+
+try:
+    import cupy as cp
+    from cupyx.scipy.interpolate import RegularGridInterpolator
+except:
+    pass
 import numpy as np
 import xarray as xr
 import pandas as pd
 import rasterio
 from tqdm import tqdm
 from rasterio.windows import Window
-from cupyx.scipy.interpolate import RegularGridInterpolator
 from decorator import decorator
 from line_profiler import LineProfiler
 
@@ -74,7 +78,6 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
             pd.DataFrame.from_dict(coldata, orient="index", columns=[colname]),
             how="outer",
         )
-    df = df.fillna(0)
 
     return df
 
@@ -95,6 +98,7 @@ def groupby_sum_cupy(groups, values=None):
     """
 
     n_total_area = cp.bincount(groups, weights=values)
+    n_total_area = cp.nan_to_num(n_total_area)
     unique_values = cp.arange(len(n_total_area))[n_total_area > 0]
     result = dict(
         zip(cp.asnumpy(unique_values), cp.asnumpy(n_total_area[unique_values]))
@@ -139,11 +143,10 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     if verbose:
         print("Interpolating...")
         t0 = time.time()
-
     ## Interpolate droughts like adm_id_da
     # Define the grid
-    lat = cp.asarray(era5_da.y.values)
-    lon = cp.asarray(era5_da.x.values)
+    lat = cp.asarray(era5_da.y.values, dtype="float32")
+    lon = cp.asarray(era5_da.x.values, dtype="float32")
     spi = cp.asarray(era5_da.values, dtype="bool")
     interpolate = RegularGridInterpolator(
         (lat, lon), spi, method="nearest", bounds_error=False
