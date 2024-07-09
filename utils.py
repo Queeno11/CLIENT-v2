@@ -323,22 +323,32 @@ def identify_needed_transformations(shock, adm_data):
     bool: True if the data needs to be coarsened.
     """
 
+    # Crop data to x-y limits
+    xmin, ymin, xmax, ymax = (
+        adm_data.x.min(),
+        adm_data.y.min(),
+        adm_data.x.max(),
+        adm_data.y.max(),
+    )
+    shock = shock.sel(x=slice(xmin, xmax), y=slice(ymax, ymin))
+
     # Query the dimensions of the data
     shock_dims = tuple(shock.sizes[d] for d in ["x", "y"])
     full_30arc_sec_shape = (43200, 21600)
     cropped_shape = tuple(adm_data.sizes[d] for d in ["x", "y"])
 
+    print(shock_dims, full_30arc_sec_shape, cropped_shape)
     # If the data is not in the correct shape, crop or interpolate
-    has_full_shape = shock_dims == full_30arc_sec_shape
-    has_cropped_shape = shock_dims == cropped_shape
-    has_smaller_shape = all(x < y for x, y in zip(shock_dims, full_30arc_sec_shape))
-
-    needs_crop = has_full_shape
+    has_cropped_shape = all(x == y for x, y in zip(shock_dims, cropped_shape))
+    has_bigger_shape = any(x > y for x, y in zip(shock_dims, full_30arc_sec_shape))
+    has_smaller_shape = any(x < y for x, y in zip(shock_dims, full_30arc_sec_shape))
+    print(has_bigger_shape, has_cropped_shape, has_smaller_shape)
+    needs_crop = has_bigger_shape
     needs_interp = (
-        (not has_cropped_shape) and (not has_full_shape) and has_smaller_shape
+        (not has_cropped_shape) and (not has_bigger_shape) and has_smaller_shape
     )
     need_coarsen = (
-        (not has_cropped_shape) and (not has_full_shape) and (not has_smaller_shape)
+        (not has_cropped_shape) and (not has_bigger_shape) and (not has_smaller_shape)
     )
 
     if need_coarsen:
@@ -351,6 +361,8 @@ def identify_needed_transformations(shock, adm_data):
             x=slice(adm_data.x.min(), adm_data.x.max()),
             y=slice(adm_data.y.max(), adm_data.y.min()),
         )
+    if needs_interp:
+        print("Data will be interpolated to match the administrative/GPW data...")
 
     return shock, needs_interp, need_coarsen
 
@@ -376,9 +388,9 @@ def parse_filename(f, shockname):
     if shockname == "drought":
         return {
             "variable": f[1],
-            "threshold": f"{f[2]}_{f[3]}",
-            "year": f[4],
-            "chunk": f[5],
+            "threshold": f"{f[2]}",
+            "year": f[3],
+            "chunk": f[4],
         }
     elif shockname == "floods":
         return {
@@ -403,8 +415,8 @@ def process_chunk(df):
         Processed dataframe
     """
     df = df.reset_index(names=["ID"])
-    df["threshold"] = df["threshold"].str.replace("_", "")
-    df["variable"] = df["variable"].str.replace("-", "")
+    df["threshold"] = df["threshold"]
+    df["variable"] = df["variable"]
     df["name"] = df["variable"].str.lower() + df["threshold"].astype(str)
     df = df.drop(
         columns=[
@@ -418,7 +430,7 @@ def process_chunk(df):
 
 def parse_columns(names: tuple):
     agg = names[0]
-    string = names[1].replace("-", "")
+    string = names[1]
     letter = agg[0]
 
     return f"{string}_{letter}"
@@ -487,7 +499,6 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
 
 
 def coordinates_from_0_360_to_180_180(ds):
-    ds["x"] = ds.x - 180
-    ds["x"] = ds.x.where(ds.x > -180, ds.x + 360)
+    ds["x"] = ds.x.where(ds.x < 180, ds.x - 360)
     ds = ds.sortby("x")
     return ds
