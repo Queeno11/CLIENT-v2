@@ -37,7 +37,9 @@ adm_id_full = (
 )
 
 # Shock
-droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc")
+droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc").drop_duplicates(
+    dim="x"
+)
 floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
     {"band_data": "flooded"}
 )
