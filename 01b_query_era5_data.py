@@ -1,3 +1,20 @@
+"""
+The code automates the download of ERA5 reanalysis data for each year from 1970 to 2020.
+It checks if the data file for each year already exists in the specified folder, and if not,
+it uses the Copernicus Climate Data Store (CDS) API to download the data.
+
+Input: none
+
+Output: data_{year}.netcdf.zip from 1970 to 2020
+"""
+
+"""
+Packages used
+
+- os: provides a way of using operating system-dependent functionality, such as reading or writing to the file system.
+- cdsapi: part of the Climate Data Store API (CDS API). It is used to access climate change.
+- tqdm: displaying progress bars in Python
+"""
 import os
 import cdsapi
 from tqdm import tqdm
