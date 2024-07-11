@@ -4,7 +4,7 @@ This code creates functions to compute the Standardized Precipitation Index (SPI
  processed data file exists and, if not, it compiles yearly data files into a single dataset, processes the
  data calculating PET, SPI and SPEI for various timescales and saves the results to a NetCDF file.
 
-Input: ERA5_monthly data
+Input: data_{year}.netcdf from 1970 to 2020 stored in "Z:\WB Data\ERA5 Reanalysis\monthly-land", generated in 01b
 
 Output:
 - ERA5_monthly_1970-2021_SPI-SPEI.nc
@@ -12,7 +12,7 @@ Output:
 """
 
 """
-Packages used
+New packages used
 
 - numpy: package for scientific computing in Python. It supports large,
 multi-dimensional arrays and matrices, along with a collection of mathematical functions

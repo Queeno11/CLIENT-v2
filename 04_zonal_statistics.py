@@ -1,3 +1,26 @@
+"""
+This code processes climate shock data (droughts and floods) and population data to analyze their
+regional effects. It loads input data on population distribution, country boundaries, and climate
+ events. For each chunk and year, it calculates zonal statistics and creates a compiled database.
+
+Input:
+- WB_country_IDs.feather
+- WB_country_grid.nc
+- ERA5_droughts_yearly.nc
+- GFD_floods_yearly.nc
+- Files in /mnt/d/Datasets/Gridded Population of the World
+
+Output:
+- {shockname}_by_admlast.dta
+- {shockname}_by_admlast.feather
+"""
+
+"""
+New packages used:
+- cupy: library for performing numerical computations on the GPU with a syntax similar to NumPy
+- time: provides various time-related functions
+"""
+
 import os
 import time
 import cupy as cp
