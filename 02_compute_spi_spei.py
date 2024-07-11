@@ -1,3 +1,33 @@
+"""
+This code creates functions to compute the Standardized Precipitation Index (SPI), Standardized
+ Precipitation Evapotranspiration Index (SPEI) and Potential Evapotranspiration (PET). It checks if the
+ processed data file exists and, if not, it compiles yearly data files into a single dataset, processes the
+ data calculating PET, SPI and SPEI for various timescales and saves the results to a NetCDF file.
+
+Input: ERA5_monthly data
+
+Output:
+- ERA5_monthly_1970-2021_SPI-SPEI.nc
+- ERA5_monthly_1970-2021_withPET.nc
+"""
+
+"""
+Packages used
+
+- numpy: package for scientific computing in Python. It supports large,
+multi-dimensional arrays and matrices, along with a collection of mathematical functions
+to operate on these arrays.
+- xarray: package for working with labeled multi-dimensional arrays and datasets
+- pandas: package for data manipulation and analysis
+- geopandas: extension of pandas that makes working with geospatial data
+- matplotlib: A 2D plotting library in Python. It is used to create static, animated, and interactive visualizations.
+- seaborn: A data visualization library based on matplotlib
+- dask.diagnostics: tools to diagnose and visualize the progress of Dask tasks
+- climate_indices: A package for calculating climate indices such as the Standardized Precipitation Index (SPI)
+and the Standardized Precipitation Evapotranspiration Index (SPEI).
+- warnings: module for controlling Python's warning messages
+"""
+
 import os
 import numpy as np
 import xarray as xr
@@ -11,6 +41,8 @@ from climate_indices import indices, compute
 import warnings
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+# Path Definition
 ERA5_DATA = rf"Z:\WB Data\ERA5 Reanalysis\monthly-land"
 PATH = "Z:\Laboral\World Bank\CLIENT v2"
 DATA_RAW = rf"{PATH}\Data\Data_raw"
@@ -111,6 +143,8 @@ if not os.path.exists(os.path.join(DATA_PROC, "ERA5_monthly_1970-2021_withPET.nc
     # ds = ds.sel(
     #     latitude=slice(-10.660608, -47.872144), longitude=slice(111.621094, 181.582031)
     # )
+
+    # Change from Kelvin to Celsius
     ds["t2m"] = ds["t2m"] - 273.15
 
     ds["PET"] = xr.apply_ufunc(

@@ -1,10 +1,18 @@
+import re
+import os
 import time
-import cupy as cp
+
+try:
+    import cupy as cp
+    from cupyx.scipy.interpolate import RegularGridInterpolator
+except:
+    pass
 import numpy as np
 import xarray as xr
+import pandas as pd
 import rasterio
+from tqdm import tqdm
 from rasterio.windows import Window
-from cupyx.scipy.interpolate import RegularGridInterpolator
 from decorator import decorator
 from line_profiler import LineProfiler
 
@@ -19,65 +27,84 @@ def profile_each_line(func, *args, **kwargs):
         profiler.print_stats()
 
 
-# import pandas as pd
-# import geopandas as gpd
-# import matplotlib.pyplot as plt
-# import seaborn as sns
+def compute_zonal_statistics(datavar, adm_id, year_gpw):
+    """Compute zonal statistics using CuPy.
+
+    Parameters:
+    -----------
+    datavar: xarray.DataArray
+        Data to be aggregated.
+    adm_id: xarray.DataArray
+        Administrative data to group the data.
+    year_gpw: xarray.DataArray
+        Population data to weight the aggregation.
+
+    Returns:
+    --------
+    pandas.DataFrame: Zonal statistics aggregated by administrative unit.
+    """
+    groups = cp.asarray(adm_id.values.flatten())
+    population_values = cp.asarray(year_gpw.flatten(), dtype=np.float32)
+    area_values = cp.asarray(datavar.flatten())
+
+    assert (
+        groups.shape == area_values.shape == population_values.shape
+    ), f"There's something wrong with the shapes of the data, they all must match: {groups.shape}, {area_values.shape}, {population_values.shape}"
+
+    # Filter out nan values
+    mask = (groups != 99999) & ~cp.isnan(area_values)
+    groups = groups[mask]
+    area_values = area_values[mask]
+    population_values = population_values[mask]
+
+    # If population is missing, set it to 0
+    population_values = cp.nan_to_num(population_values)
+
+    # Calculate the weighted sum of affected area and population
+    n_total_area = groupby_sum_cupy(groups, values=None)
+    n_affected_area = groupby_sum_cupy(groups, values=area_values)
+    n_total_pop = groupby_sum_cupy(groups, values=population_values)
+    n_affected_pop = groupby_sum_cupy(groups, values=population_values * area_values)
+
+    cols = {
+        "cells_affected": n_affected_area,
+        "total_cells": n_total_area,
+        "population_affected_n": n_affected_pop,
+        "total_population": n_total_pop,
+    }
+    df = pd.DataFrame()
+    for colname, coldata in cols.items():
+        df = df.join(
+            pd.DataFrame.from_dict(coldata, orient="index", columns=[colname]),
+            how="outer",
+        )
+
+    return df
 
 
-def compute_zonal_statistics(groups, area_values, population_values, sorted=False):
-    """Groupby mean function using cupy. Data doesn't have to be sorted.
+def groupby_sum_cupy(groups, values=None):
+    """Calculate the weighted sum of values based on the groups.
 
     Parameters:
     -----------
     groups: cp.array of shape (n, 1)
-        Data to be grouped by the first column.
-    values: cp.array of shape (n, 1)
-        Data to be averaged according to groups.
+        List of group indices.
+    values: cp.array of shape (n, 1) (optional)
+        List of values to sum. If None, the count for each group is calculated.
 
+    Returns:
+    --------
+    dict: Dictionary with the group indices as keys and the sum as values.
     """
-    # Remove rows with NaNs
-    mask = ~cp.isnan(groups) & ~cp.isnan(area_values)
-    groups = groups[mask]
-    area_values = area_values[mask]
-    population_values = population_values[mask]
-    del mask
 
-    # Sort based on the groups if not already sorted
-    if not sorted:
-        sort_indices = cp.argsort(groups)
-        groups = groups[sort_indices]
-        area_values = area_values[sort_indices]
-        population_values = population_values[sort_indices]
-        del sort_indices
-
-    _id, _pos, g_count = cp.unique(groups, return_index=True, return_counts=True)
-    del groups
-
-    g_area_sum = cp.add.reduceat(area_values, _pos)
-    g_pop_sum = cp.add.reduceat(population_values, _pos)
-    g_affected_pop_sum = cp.add.reduceat(population_values * area_values, _pos)
-    del area_values
-
-    g_area_mean = g_area_sum / g_count
-    g_pop_mean = g_affected_pop_sum / g_pop_sum
-    aggs = dict(
-        zip(
-            cp.asnumpy(_id),
-            zip(
-                cp.asnumpy(g_area_mean),
-                cp.asnumpy(g_area_sum),
-                cp.asnumpy(g_count),
-                cp.asnumpy(g_pop_mean),
-                cp.asnumpy(g_affected_pop_sum),
-                cp.asnumpy(g_pop_sum),
-            ),
-        )
+    n_total_area = cp.bincount(groups, weights=values)
+    n_total_area = cp.nan_to_num(n_total_area)
+    unique_values = cp.arange(len(n_total_area))[n_total_area > 0]
+    result = dict(
+        zip(cp.asnumpy(unique_values), cp.asnumpy(n_total_area[unique_values]))
     )
-    # print(g_area_mean)
-    # print(g_pop_mean)
-    # print(aggs)
-    return aggs
+
+    return result
 
 
 # @profile_each_line
@@ -116,11 +143,10 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     if verbose:
         print("Interpolating...")
         t0 = time.time()
-
     ## Interpolate droughts like adm_id_da
     # Define the grid
-    lat = cp.asarray(era5_da.y.values)
-    lon = cp.asarray(era5_da.x.values)
+    lat = cp.asarray(era5_da.y.values, dtype="float32")
+    lon = cp.asarray(era5_da.x.values, dtype="float32")
     spi = cp.asarray(era5_da.values, dtype="bool")
     interpolate = RegularGridInterpolator(
         (lat, lon), spi, method="nearest", bounds_error=False
@@ -137,9 +163,6 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
         print(f"Time Interp (cupyx.scipy): {t1 - t0}")
 
     return era5_interp.astype("bool")
-<<<<<<< Updated upstream
-=======
-
 
 def get_bounds_from_chunk_number(chunk_number, total_chunks=8, canvas=None):
     """Get the bounding box coordinates for a given chunk number.
@@ -414,7 +437,7 @@ def parse_columns(names: tuple):
 
 def process_all_dataframes(gdf, parquet_paths, shockname):
     import dask.dataframe as dd
-    
+
     gdf.columns = [col.lower() for col in gdf.columns]
 
     files = os.listdir(parquet_paths)
@@ -431,7 +454,6 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
 
     # Concatenate all the dataframes and create the shock variables
     df = pd.concat(dfs)
-
     df = df.groupby(["ID", "name", "year"]).sum()
     df["area_affected"] = df["cells_affected"] / df["total_cells"]
     df["population_affected"] = df["population_affected_n"] / df["total_population"]
@@ -480,4 +502,4 @@ def coordinates_from_0_360_to_180_180(ds):
     ds["x"] = ds.x.where(ds.x < 180, ds.x - 360)
     ds = ds.sortby("x")
     return ds
->>>>>>> Stashed changes
+
