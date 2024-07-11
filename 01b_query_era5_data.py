@@ -5,7 +5,7 @@ it uses the Copernicus Climate Data Store (CDS) API to download the data.
 
 Input: none
 
-Output: data_{year}.netcdf.zip from 1970 to 2020
+Output: data_{year}.netcdf from 1970 to 2020, stored in Z:\WB Data\ERA5 Reanalysis\monthly-land
 """
 
 """
