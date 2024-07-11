@@ -206,5 +206,29 @@ for chunk_number in tqdm(range(total_chunks)):
                 rf"{DATA_PROC}/shocks/{var}_{year}_{chunk_number}_zonal_stats.parquet"
             )
 
+<<<<<<< Updated upstream
     chunk_end = time.time()
     print(f"Total chunk Time: {chunk_end - chunk_start_time}")
+=======
+    #             ### Groupby
+    #             df = utils.compute_zonal_statistics(
+    #                 datavar, chunk_adm_id, chunk_year_gpw
+    #             )
+    #             df.to_parquet(
+    #                 rf"{PARQUET_PATH}/{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
+    #             )
+
+    ## Save shock data
+    # Compile all the dataframes and generate country dtas
+    print("Compiling data...")
+    out_df, variables = utils.process_all_dataframes(WB_data, PARQUET_PATH, shockname)
+    # Export minimal version
+    out_df[["adm0", "adm_lst", "year", "ID"] + variables].to_stata(
+        os.path.join(DATA_OUT, f"{shockname}_by_admlast.dta")
+    )
+    # # Export full version with geometry
+    # out_df.to_feather(
+    #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
+    # )
+    break
+>>>>>>> Stashed changes
