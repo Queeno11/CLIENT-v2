@@ -164,7 +164,6 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
 
     return era5_interp.astype("bool")
 
-
 def get_bounds_from_chunk_number(chunk_number, total_chunks=8, canvas=None):
     """Get the bounding box coordinates for a given chunk number.
 
@@ -437,6 +436,7 @@ def parse_columns(names: tuple):
 
 
 def process_all_dataframes(gdf, parquet_paths, shockname):
+    import dask.dataframe as dd
 
     gdf.columns = [col.lower() for col in gdf.columns]
 
@@ -445,7 +445,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
 
     dfs = []
     for f in tqdm(files):
-        df = pd.read_parquet(os.path.join(parquet_paths, f))
+        df = dd.read_parquet(os.path.join(parquet_paths, f))
         # Agrego como cols la variable, threshold, year y chunk
         names = parse_filename(f, shockname)
         df[list(names.keys())] = list(names.values())
@@ -502,3 +502,4 @@ def coordinates_from_0_360_to_180_180(ds):
     ds["x"] = ds.x.where(ds.x < 180, ds.x - 360)
     ds = ds.sortby("x")
     return ds
+
