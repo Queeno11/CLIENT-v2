@@ -10,7 +10,13 @@
 *.shp
 *.shf
 *.dbf
+*.prj
+*.shx
+*.cpg
+*.qpj
 *.db
+*.geojson
+*.qgs
 *.json
 *.html
 *.png
