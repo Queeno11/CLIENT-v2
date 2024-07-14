@@ -1,6 +1,9 @@
 import re
 import os
 import time
+import pyarrow as pa
+import pyarrow.parquet as pq
+import glob
 
 try:
     import cupy as cp
@@ -163,6 +166,7 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
         print(f"Time Interp (cupyx.scipy): {t1 - t0}")
 
     return era5_interp.astype("bool")
+
 
 def get_bounds_from_chunk_number(chunk_number, total_chunks=8, canvas=None):
     """Get the bounding box coordinates for a given chunk number.
@@ -413,7 +417,7 @@ def process_chunk(df):
     df : pd.DataFrame
         Processed dataframe
     """
-    df = df.reset_index(names=["ID"])
+    df = df.reset_index().rename(columns={"index": "ID"})
     df["threshold"] = df["threshold"]
     df["variable"] = df["variable"]
     df["name"] = df["variable"].str.lower() + df["threshold"].astype(str)
@@ -435,25 +439,64 @@ def parse_columns(names: tuple):
     return f"{string}_{letter}"
 
 
+def compress_dataframe(df):
+    "" "Compress the dataframe to save memory" ""
+
+    df["cells_affected"] = df["cells_affected"].fillna(0).astype(np.uint16)
+    df["total_cells"] = df["total_cells"].fillna(0).astype(np.uint16)
+    df["population_affected_n"] = (
+        df["population_affected_n"].fillna(0).astype(np.uint64)
+    )
+    df["total_population"] = df["total_population"].fillna(0).astype(np.uint64)
+    return df
+
+
 def process_all_dataframes(gdf, parquet_paths, shockname):
-    import dask.dataframe as dd
+    import gc
+
+    pd.set_option("future.no_silent_downcasting", True)
 
     gdf.columns = [col.lower() for col in gdf.columns]
 
     files = os.listdir(parquet_paths)
     files = [f for f in files if f.endswith(".parquet") and shockname in f]
+    files = [f for f in files if "out_" not in f]
+    print(len(files))
+    outpath = os.path.join(parquet_paths, f"out_{shockname}_ungrouped.csv")
 
-    dfs = []
+    print("Reading and concatenating dataframes...")
+    # Memory efficient way to concatenate dataframes:
+    #   https://www.confessionsofadataguy.com/solving-the-memory-hungry-pandas-concat-problem/
+    pqwriter = None
+    create_file = True
     for f in tqdm(files):
-        df = dd.read_parquet(os.path.join(parquet_paths, f))
+        df = pd.read_parquet(os.path.join(parquet_paths, f))
+        df = compress_dataframe(df)
+
         # Agrego como cols la variable, threshold, year y chunk
         names = parse_filename(f, shockname)
-        df[list(names.keys())] = list(names.values())
-        # Proceso el chunk
-        dfs += [process_chunk(df)]
+        for col, value in names.items():
+            df[col] = value
 
-    # Concatenate all the dataframes and create the shock variables
-    df = pd.concat(dfs)
+        # Proceso el chunk
+        df = process_chunk(df)
+
+        # Guardo el chunk en un archivo parquet
+        table = pa.Table.from_pandas(df)
+        if create_file:
+            # create a parquet write object giving it an output file
+            pqwriter = pq.ParquetWriter(outpath, table.schema)
+            create_file = False
+        pqwriter.write_table(table)
+
+    if pqwriter:
+        pqwriter.close()
+
+    gc.collect()
+    print(f"Se creó {outpath}")
+
+    df = pd.read_parquet(outpath)
+    print("Grouping data...")
     df = df.groupby(["ID", "name", "year"]).sum()
     df["area_affected"] = df["cells_affected"] / df["total_cells"]
     df["population_affected"] = df["population_affected_n"] / df["total_population"]
@@ -471,6 +514,11 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
         .replace([np.inf, -np.inf], 0)
     )
 
+    path = os.path.join(parquet_paths, f"{shockname}_long.csv")
+    df.to_csv(path)
+    print(f"Se creó {path}")
+
+    df = pd.read_csv(path)
     # Pivot data: every shock has to be a column
     pivot = df.pivot(
         index=["ID", "year"],
@@ -485,15 +533,15 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     pivot.columns = newcols
     pivot = pivot.reset_index()
 
+    path = os.path.join(parquet_paths, f"{shockname}_wide.csv")
+    pivot.to_csv(path)
+    print(f"Se creó {path}")
+
+    pivot = pd.read_csv(path)
+
     # Add the data to the gdf
-    out_df = gdf.merge(pivot, left_on="id", right_on="ID", validate="1:m", how="outer")
-    out_df.rename(
-        columns={
-            "adm0_code": "adm0",
-            "admlast_code": "adm_lst",
-        },
-        inplace=True,
-    )
+    print(gdf.columns)
+    out_df = gdf.merge(pivot, on="ID", validate="1:m", how="outer")
 
     return out_df, newcols
 
@@ -502,4 +550,3 @@ def coordinates_from_0_360_to_180_180(ds):
     ds["x"] = ds.x.where(ds.x < 180, ds.x - 360)
     ds = ds.sortby("x")
     return ds
-
