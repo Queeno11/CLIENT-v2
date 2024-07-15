@@ -99,7 +99,6 @@ def groupby_sum_cupy(groups, values=None):
     --------
     dict: Dictionary with the group indices as keys and the sum as values.
     """
-
     n_total_area = cp.bincount(groups, weights=values)
     n_total_area = cp.nan_to_num(n_total_area)
     unique_values = cp.arange(len(n_total_area))[n_total_area > 0]
@@ -340,12 +339,11 @@ def identify_needed_transformations(shock, adm_data):
     full_30arc_sec_shape = (43200, 21600)
     cropped_shape = tuple(adm_data.sizes[d] for d in ["x", "y"])
 
-    print(shock_dims, full_30arc_sec_shape, cropped_shape)
     # If the data is not in the correct shape, crop or interpolate
     has_cropped_shape = all(x == y for x, y in zip(shock_dims, cropped_shape))
     has_bigger_shape = any(x > y for x, y in zip(shock_dims, full_30arc_sec_shape))
     has_smaller_shape = any(x < y for x, y in zip(shock_dims, full_30arc_sec_shape))
-    print(has_bigger_shape, has_cropped_shape, has_smaller_shape)
+
     needs_crop = has_bigger_shape
     needs_interp = (
         (not has_cropped_shape) and (not has_bigger_shape) and has_smaller_shape
@@ -461,7 +459,6 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     files = os.listdir(parquet_paths)
     files = [f for f in files if f.endswith(".parquet") and shockname in f]
     files = [f for f in files if "out_" not in f]
-    print(len(files))
     outpath = os.path.join(parquet_paths, f"out_{shockname}_ungrouped.csv")
 
     print("Reading and concatenating dataframes...")
@@ -540,7 +537,6 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     pivot = pd.read_csv(path)
 
     # Add the data to the gdf
-    print(gdf.columns)
     out_df = gdf.merge(pivot, on="ID", validate="1:m", how="outer")
 
     return out_df, newcols
