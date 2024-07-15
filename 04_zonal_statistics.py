@@ -81,7 +81,7 @@ if __name__ == "__main__":
             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
-            for chunk_number in tqdm(range(12, TOTAL_CHUNKS)):
+            for chunk_number in tqdm(TOTAL_CHUNKS):
                 chunk_start_time = time.time()
 
                 datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
