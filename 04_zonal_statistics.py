@@ -1,13 +1,13 @@
 if __name__ == "__main__":
 
     import os
+    import gc
     import time
     import cupy as cp
     import numpy as np
     import xarray as xr
     import pandas as pd
     import geopandas as gpd
-    from dask.distributed import Client
     import utils
     from tqdm import tqdm
 
@@ -20,13 +20,12 @@ if __name__ == "__main__":
     DATA_RAW = rf"{PATH}/Data/Data_raw"
     DATA_PROC = rf"{PATH}/Data/Data_proc"
     DATA_OUT = rf"{PATH}/Data/Data_out"
-    TOTAL_CHUNKS = 16
     PARQUET_PATH = rf"{DATA_PROC}/shocks_by_adm"
     GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
-    print("Loading data...")
 
-    client = Client()
-    print(client)
+    TOTAL_CHUNKS = 16
+
+    print("Loading data...")
 
     ## Global Loads
     # Population data is loaded in the loop
@@ -53,14 +52,16 @@ if __name__ == "__main__":
 
     shocks = {
         "drought": droughts,
-        # "floods": floods,
-        # "hurricanes": hurricanes,
+        "floods": floods,
+        "hurricanes": hurricanes,
     }
 
     ### Run process
     for shockname, shock in shocks.items():
 
+        print("################################")
         print(f"Processing {shockname}...")
+        print("################################")
 
         shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
             shock, adm_id_full
@@ -69,7 +70,7 @@ if __name__ == "__main__":
         ## Loop over chunks
         #   Data is dividied in chunks (sections of the world) to avoid memory issues
         #   and to allow parallel processing. This loop will iterate over every chunk
-        for chunk_number in tqdm(range(TOTAL_CHUNKS)):
+        for chunk_number in tqdm(range(12, TOTAL_CHUNKS)):
             chunk_start_time = time.time()
 
             datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
@@ -77,10 +78,10 @@ if __name__ == "__main__":
             )
             chunk_shock = shock.sel(datafilter).load()
             chunk_adm_id = adm_id_full.sel(datafilter)
-            if chunk_adm_id.notnull().sum() == 0:
+            if (chunk_adm_id != 99999).sum() == 0:
                 print("No data in this chunk, skipping...")
                 continue
-
+            print(chunk_adm_id)
             ## Loop over years
             # Note: data in this NC file will query faster if chunked in the same way as the data is stored
             #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
@@ -119,12 +120,14 @@ if __name__ == "__main__":
                         rf"{PARQUET_PATH}/{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
                     )
 
+    # Cleanup variables
     adm_id_full = None
     chunk_shock = None
     chunk_adm_id = None
     chunk_year_shock = None
     chunk_year_gpw = None
     datavar = None
+    gc.collect()
 
     for shockname, shock in shocks.items():
 
