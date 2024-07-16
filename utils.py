@@ -384,7 +384,7 @@ def parse_filename(f, shockname):
             - threshold: str
             - year: str
     """
-
+    f = f.replace("WB_", "").replace("IPUMS_", "")
     f = f.split("_")
     if shockname == "drought":
         return {
@@ -418,7 +418,7 @@ def process_chunk(df):
     df = df.reset_index().rename(columns={"index": "ID"})
     df["threshold"] = df["threshold"]
     df["variable"] = df["variable"]
-    df["name"] = df["variable"].str.lower() + df["threshold"].astype(str)
+    df["name"] = df["variable"].str.lower() + "_" + df["threshold"].astype(str)
     df = df.drop(
         columns=[
             "variable",
