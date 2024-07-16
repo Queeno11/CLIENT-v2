@@ -47,11 +47,10 @@ if __name__ == "__main__":
         {"band_data": "flooded"}
     )
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
-
     shocks = {
-        # "drought": droughts,
-        # "floods": floods,
-        "hurricanes": hurricanes,
+        "drought": droughts,
+        "floods": floods,
+        # "hurricanes": hurricanes,
     }
 
     ### Run process
@@ -78,26 +77,18 @@ if __name__ == "__main__":
                 shock, adm_id_full
             )
 
-            # Load in memory if there's enough space
-            shock_loaded = False
-            memory_required = shock.nbytes
-            available_memory = psutil.virtual_memory().available
-            if memory_required < available_memory:
-                print("Loading shock in memory...")
-                shock = shock.load()
-                shock_loaded = True
-
             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
-                chunk_start_time = time.time()
 
                 datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
                     chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
                 )
-                chunk_shock = shock.sel(datafilter)
-                chunk_adm_id = adm_id_full.sel(datafilter)  # .load()
+
+                # Load in memory if there's enough space
+                chunk_shock = utils.try_loading_ds(shock.sel(datafilter))
+                chunk_adm_id = adm_id_full.sel(datafilter)
                 if (chunk_adm_id != 99999).sum() == 0:
                     print("No data in this chunk, skipping...")
                     continue

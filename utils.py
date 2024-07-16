@@ -4,6 +4,7 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 import glob
+import psutil
 
 try:
     import cupy as cp
@@ -546,3 +547,15 @@ def coordinates_from_0_360_to_180_180(ds):
     ds["x"] = ds.x.where(ds.x < 180, ds.x - 360)
     ds = ds.sortby("x")
     return ds
+
+
+def try_loading_ds(ds):
+    memory_required = ds.nbytes
+    available_memory = psutil.virtual_memory().available
+    if memory_required < available_memory:
+        print("Loading shock in memory...")
+        ds = ds.load()
+        is_loaded = True
+    else:
+        is_loaded = False
+    return ds, is_loaded
