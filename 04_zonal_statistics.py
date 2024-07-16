@@ -152,7 +152,7 @@ if __name__ == "__main__":
 
             # Export minimal version
             out_df[
-                ["adm0_code", "adm1_code", "adm2_code", "year", "ID"] + variables
+                ["ADM0_CODE", "ADM1_CODE", "ADM2_CODE", "year", "ID"] + variables
             ].to_stata(os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"))
             # # Export full version with geometry
             # out_df.to_feather(
