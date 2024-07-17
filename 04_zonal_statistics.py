@@ -33,6 +33,8 @@ if __name__ == "__main__":
 
     # World Bank country bounds and IDs (we only get the total bounds from here)
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
+    IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
+    gdfs = {"WB": WB_data, "IPUMS": IPUMS_data}
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
@@ -50,7 +52,7 @@ if __name__ == "__main__":
     shocks = {
         "drought": droughts,
         "floods": floods,
-        # "hurricanes": hurricanes,
+        "hurricanes": hurricanes,
     }
 
     ### Run process
@@ -64,14 +66,12 @@ if __name__ == "__main__":
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
         print("--------------------------------")
-        print("--------------------------------")
         print(f"---   {admname} ADM boundaries   ---")
-        print("--------------------------------")
         print("--------------------------------")
 
         for shockname, shock in shocks.items():
 
-            print(f"Processing {shockname}...")
+            print(f"----- Processing {shockname}...")
 
             shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
                 shock, adm_id_full
@@ -87,7 +87,7 @@ if __name__ == "__main__":
                 )
 
                 # Load in memory if there's enough space
-                chunk_shock = utils.try_loading_ds(shock.sel(datafilter))
+                chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
                 chunk_adm_id = adm_id_full.sel(datafilter)
                 if (chunk_adm_id != 99999).sum() == 0:
                     print("No data in this chunk, skipping...")
@@ -95,6 +95,7 @@ if __name__ == "__main__":
 
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
+
                     chunk_var = chunk_shock[var]
                     # shock_loaded = False
                     # if shock_loaded is False:
@@ -152,24 +153,32 @@ if __name__ == "__main__":
             chunk_year_gpw = None
             gc.collect()
 
-        adm_id_full = None
+    adm_id_full = None
 
-        for shockname, shock in shocks.items():
+    # for admname, gdf in gdfs.items():
+    #     chunks_path = os.path.join(PARQUET_PATH, admname)
+    #     print("--------------------------------")
+    #     print(f"---   {admname} ADM boundaries   ---")
+    #     print("--------------------------------")
 
-            print(f"Exporting {shockname}...")
+    #     for shockname, shock in shocks.items():
 
-            ## Save shock data
-            # Compile all the dataframes and generate country dtas
-            out_df, variables = utils.process_all_dataframes(
-                WB_data, chunks_path, shockname
-            )
+    #         print(f"Exporting {shockname}...")
 
-            # Export minimal version
-            out_df[
-                ["ADM0_CODE", "ADM1_CODE", "ADM2_CODE", "year", "ID"] + variables
-            ].to_stata(os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"))
-            # # Export full version with geometry
-            # out_df.to_feather(
-            #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
-            # )
-            break
+    #         ## Save shock data
+    #         # Compile all the dataframes and generate country dtas
+    #         out_df, variables = utils.process_all_dataframes(
+    #             gdf, chunks_path, shockname
+    #         )
+
+    #         # Export minimal version
+    #         out_df.drop(columns=["geometry", "Unnamed: 0"]).to_stata(
+    #             os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"),
+    #             write_index=False,
+    #         )
+
+    #         # # Export full version with geometry
+    #         # out_df.to_feather(
+    #         #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
+    #         # )
+    #         break
