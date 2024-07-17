@@ -455,7 +455,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
 
     pd.set_option("future.no_silent_downcasting", True)
 
-    gdf.columns = [col.lower() for col in gdf.columns]
+    gdf.columns = [col.lower() if col != "ID" else col for col in gdf.columns]
 
     files = os.listdir(parquet_paths)
     files = [f for f in files if f.endswith(".parquet") and shockname in f]
@@ -513,7 +513,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     )
 
     path = os.path.join(parquet_paths, f"{shockname}_long.csv")
-    df.to_csv(path)
+    # df.to_csv(path)
     print(f"Se creó {path}")
 
     df = pd.read_csv(path)
@@ -553,7 +553,7 @@ def try_loading_ds(ds):
     memory_required = ds.nbytes
     available_memory = psutil.virtual_memory().available
     if memory_required < available_memory:
-        print("Loading shock in memory...")
+        # print("Loading shock in memory...")
         ds = ds.load()
         is_loaded = True
     else:
