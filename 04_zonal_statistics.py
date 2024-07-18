@@ -1,9 +1,6 @@
 if __name__ == "__main__":
 
     import os
-    import gc
-    import time
-    import psutil
     import cupy as cp
     import numpy as np
     import xarray as xr
@@ -50,9 +47,9 @@ if __name__ == "__main__":
     )
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
     shocks = {
+        "hurricanes": hurricanes,
         "drought": droughts,
         "floods": floods,
-        "hurricanes": hurricanes,
     }
 
     ### Run process
@@ -97,20 +94,17 @@ if __name__ == "__main__":
                 for var in tqdm(shock.data_vars, leave=False):
 
                     chunk_var = chunk_shock[var]
-                    # shock_loaded = False
-                    # if shock_loaded is False:
-                    #     chunk_var = chunk_var.load()
 
                     ## Loop over years
                     # Note: data in this NC file will query faster if chunked in the same way as the data is stored
                     #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
                     #   send to cupy faster. That's why we loop over chunks first and then years.
+                    gpw_year_prev = 0
                     for year in tqdm(shock.year.values, leave=False):
                         out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
                         if os.path.exists(out_path):
                             continue
 
-                        gpw_year_prev = 0
                         chunk_year_var = chunk_var.sel(year=year)
 
                         gpw_year = utils.find_gpw_closes_year(year)
@@ -123,6 +117,7 @@ if __name__ == "__main__":
                                     datafilter
                                 )
                                 chunk_year_gpw = cp.asarray(chunk_year_gpw.values)
+                                gpw_year_prev = gpw_year
 
                         if needs_interp:
                             chunk_year_var = utils.intepolate_era5_data(
@@ -138,47 +133,3 @@ if __name__ == "__main__":
                             chunk_year_var, chunk_adm_id, chunk_year_gpw
                         )
                         df.to_parquet(out_path)
-
-                        # Cleanup variables
-                        del df, chunk_year_var
-                        gc.collect()
-
-                    del chunk_var
-                    gc.collect()
-
-            # Cleanup variables
-            chunk_shock = None
-            chunk_adm_id = None
-            chunk_year_shock = None
-            chunk_year_gpw = None
-            gc.collect()
-
-    adm_id_full = None
-
-    # for admname, gdf in gdfs.items():
-    #     chunks_path = os.path.join(PARQUET_PATH, admname)
-    #     print("--------------------------------")
-    #     print(f"---   {admname} ADM boundaries   ---")
-    #     print("--------------------------------")
-
-    #     for shockname, shock in shocks.items():
-
-    #         print(f"Exporting {shockname}...")
-
-    #         ## Save shock data
-    #         # Compile all the dataframes and generate country dtas
-    #         out_df, variables = utils.process_all_dataframes(
-    #             gdf, chunks_path, shockname
-    #         )
-
-    #         # Export minimal version
-    #         out_df.drop(columns=["geometry", "Unnamed: 0"]).to_stata(
-    #             os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"),
-    #             write_index=False,
-    #         )
-
-    #         # # Export full version with geometry
-    #         # out_df.to_feather(
-    #         #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
-    #         # )
-    #         break
