@@ -472,24 +472,28 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     pqwriter = None
     create_file = True
     for f in tqdm(files):
-        df = pd.read_parquet(os.path.join(parquet_paths, f))
-        df = compress_dataframe(df)
+        try:
+            df = pd.read_parquet(os.path.join(parquet_paths, f))
+            df = compress_dataframe(df)
 
-        # Agrego como cols la variable, threshold, year y chunk
-        names = parse_filename(f, shockname)
-        for col, value in names.items():
-            df[col] = value
+            # Agrego como cols la variable, threshold, year y chunk
+            names = parse_filename(f, shockname)
+            for col, value in names.items():
+                df[col] = value
 
-        # Proceso el chunk
-        df = process_chunk(df)
+            # Proceso el chunk
+            df = process_chunk(df)
 
-        # Guardo el chunk en un archivo parquet
-        table = pa.Table.from_pandas(df)
-        if create_file:
-            # create a parquet write object giving it an output file
-            pqwriter = pq.ParquetWriter(outpath, table.schema)
-            create_file = False
-        pqwriter.write_table(table)
+            # Guardo el chunk en un archivo parquet
+            table = pa.Table.from_pandas(df)
+            if create_file:
+                # create a parquet write object giving it an output file
+                pqwriter = pq.ParquetWriter(outpath, table.schema)
+                create_file = False
+            pqwriter.write_table(table)
+
+        except Exception as e:
+            print(f"Error with file {f}: {e}")
 
     if pqwriter:
         pqwriter.close()
@@ -562,7 +566,7 @@ def try_loading_ds(ds):
     memory_required = ds.nbytes
     available_memory = psutil.virtual_memory().available
     if memory_required < available_memory:
-        print("Loading shock in memory...")
+        # print("Loading shock in memory...")
         ds = ds.load()
         is_loaded = True
     else:
