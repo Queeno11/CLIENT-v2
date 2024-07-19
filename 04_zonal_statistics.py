@@ -35,7 +35,7 @@ if __name__ == "__main__":
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
-    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
+    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
     adm_grids = {"WB": WB_adm_id_full, "IPUMS": IPUMS_adm_id_full}
 
     # Shock
@@ -86,6 +86,7 @@ if __name__ == "__main__":
                 # Load in memory if there's enough space
                 chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
                 chunk_adm_id = adm_id_full.sel(datafilter)
+
                 if (chunk_adm_id != 99999).sum() == 0:
                     print("No data in this chunk, skipping...")
                     continue

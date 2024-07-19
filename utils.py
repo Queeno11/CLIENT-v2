@@ -387,6 +387,11 @@ def parse_filename(f, shockname):
     """
     f = f.replace("WB_", "").replace("IPUMS_", "")
     f = f.split("_")
+    assert shockname in [
+        "drought",
+        "floods",
+        "hurricanes",
+    ], "Invalid shockname. If you are adding a new shockname, please add it to the list in utils.parse_filename()."
     if shockname == "drought":
         return {
             "variable": f[1],
@@ -397,9 +402,16 @@ def parse_filename(f, shockname):
     elif shockname == "floods":
         return {
             "variable": f[1],
+            "threshold": "",
             "year": f[2],
             "chunk": f[3],
-            "threshold": "",
+        }
+    elif shockname == "hurricanes":
+        return {
+            "variable": f"{f[1]} {f[2]}",  # ej. category 5
+            "threshold": f[3],  # buffer size, ej. b50
+            "year": f[4],
+            "chunk": f[5],
         }
 
 
@@ -419,14 +431,6 @@ def process_chunk(df):
     df = df.reset_index().rename(columns={"index": "ID"})
     df["threshold"] = df["threshold"]
     df["variable"] = df["variable"]
-    df["name"] = df["variable"].str.lower() + "_" + df["threshold"].astype(str)
-    df = df.drop(
-        columns=[
-            "variable",
-            "threshold",
-            "chunk",
-        ]
-    )
     return df
 
 
@@ -460,7 +464,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     files = os.listdir(parquet_paths)
     files = [f for f in files if f.endswith(".parquet") and shockname in f]
     files = [f for f in files if "out_" not in f]
-    outpath = os.path.join(parquet_paths, f"out_{shockname}_ungrouped.csv")
+    outpath = os.path.join(parquet_paths, f"out_{shockname}_ungrouped.parquet")
 
     print("Reading and concatenating dataframes...")
     # Memory efficient way to concatenate dataframes:
@@ -492,10 +496,9 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
 
     gc.collect()
     print(f"Se creó {outpath}")
-
     df = pd.read_parquet(outpath)
     print("Grouping data...")
-    df = df.groupby(["ID", "name", "year"]).sum()
+    df = df.groupby(["ID", "year", "variable", "threshold"]).sum()
     df["area_affected"] = df["cells_affected"] / df["total_cells"]
     df["population_affected"] = df["population_affected_n"] / df["total_population"]
     df = (
@@ -511,12 +514,18 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
         .fillna(0)
         .replace([np.inf, -np.inf], 0)
     )
+    return df
 
-    path = os.path.join(parquet_paths, f"{shockname}_long.csv")
-    # df.to_csv(path)
-    print(f"Se creó {path}")
 
-    df = pd.read_csv(path)
+def process_to_stata(df, gdf, parquet_paths, shockname):
+    df["name"] = df["variable"].str.lower() + "_" + df["threshold"].astype(str)
+    df = df.drop(
+        columns=[
+            "variable",
+            "threshold",
+            "chunk",
+        ]
+    )
     # Pivot data: every shock has to be a column
     pivot = df.pivot(
         index=["ID", "year"],
@@ -540,7 +549,7 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
     # Add the data to the gdf
     out_df = gdf.merge(pivot, on="ID", validate="1:m", how="outer")
 
-    return out_df, newcols
+    return out_df
 
 
 def coordinates_from_0_360_to_180_180(ds):
@@ -553,7 +562,7 @@ def try_loading_ds(ds):
     memory_required = ds.nbytes
     available_memory = psutil.virtual_memory().available
     if memory_required < available_memory:
-        # print("Loading shock in memory...")
+        print("Loading shock in memory...")
         ds = ds.load()
         is_loaded = True
     else:

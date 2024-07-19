@@ -12,6 +12,7 @@
 *.dbf
 *.prj
 *.shx
+*.qmd
 *.cpg
 *.qpj
 *.db
