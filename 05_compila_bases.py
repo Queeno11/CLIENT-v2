@@ -24,8 +24,6 @@ if __name__ == "__main__":
     PARQUET_PATH = rf"{DATA_PROC}/shocks_by_adm"
     GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
 
-    TOTAL_CHUNKS = 16
-
     print("Loading data...")
 
     ## Global Loads
@@ -45,9 +43,9 @@ if __name__ == "__main__":
     )
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
     shocks = {
-        "drought": droughts,
         "floods": floods,
-        # "hurricanes": hurricanes,
+        "hurricanes": hurricanes,
+        "drought": droughts,
     }
 
     for admname, gdf in gdfs.items():
@@ -61,19 +59,31 @@ if __name__ == "__main__":
             print(f"Exporting {shockname}...")
 
             ## Save shock data
-            # Compile all the dataframes and generate country dtas
-            out_df, variables = utils.process_all_dataframes(
-                gdf, chunks_path, shockname
-            )
 
-            # Export minimal version
-            out_df.drop(columns=["geometry", "Unnamed: 0"]).to_stata(
-                os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"),
-                write_index=False,
-            )
+            ### CSV VERSION (LONG)
+            outpath = os.path.join(DATA_OUT, f"{admname}_{shockname}_long.csv")
+            if os.path.exists(outpath):
+                out_df = pd.read_csv(outpath)
+                print(f"File {shockname} already exists, skipping...")
+            else:
+                # Compile all the dataframes and generate country dtas
+                out_df = utils.process_all_dataframes(gdf, chunks_path, shockname)
+                out_df.to_csv(outpath)
+                print(f"Se creó {outpath}")
 
-            # # Export full version with geometry
-            # out_df.to_feather(
-            #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
-            # )
-            break
+            if admname != "IPUMS":
+                continue
+
+            ### STATA VERSION (WIDE) (only for IPUMS)
+            outpath = os.path.join(DATA_OUT, f"{admname}_{shockname}_wide.dta")
+            if os.path.exists(outpath):
+                print(f"File {shockname} already exists, skipping...")
+                continue
+            else:
+                out_df = utils.process_to_stata(out_df, gdf, chunks_path, shockname)
+
+                # Export minimal version
+                out_df.drop(columns=["geometry", "Unnamed: 0"]).to_stata(
+                    outpath,
+                    write_index=False,
+                )
