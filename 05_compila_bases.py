@@ -27,26 +27,17 @@ if __name__ == "__main__":
     print("Loading data...")
 
     ## Global Loads
-    # Population data is loaded in the loop
-
-    # World Bank country bounds and IDs (we only get the total bounds from here)
+    # World Bank country bounds and IDs
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
     gdfs = {"WB": WB_data, "IPUMS": IPUMS_data}
 
     # Shock
-    droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc").drop_duplicates(
-        dim="x"
-    )
-    floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
-        {"band_data": "flooded"}
-    )
-    hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
-    shocks = {
-        "floods": floods,
-        "hurricanes": hurricanes,
-        "drought": droughts,
-    }
+    shocks = [
+        "floods",
+        "hurricanes",
+        "drought",
+    ]
 
     for admname, gdf in gdfs.items():
         chunks_path = os.path.join(PARQUET_PATH, admname)
@@ -54,7 +45,7 @@ if __name__ == "__main__":
         print(f"---   {admname} ADM boundaries   ---")
         print("--------------------------------")
 
-        for shockname, shock in shocks.items():
+        for shockname in shocks:
 
             print(f"Exporting {shockname}...")
 
