@@ -445,8 +445,8 @@ def parse_columns(names: tuple):
 def compress_dataframe(df):
     "" "Compress the dataframe to save memory" ""
 
-    df["cells_affected"] = df["cells_affected"].fillna(0).astype(np.uint16)
-    df["total_cells"] = df["total_cells"].fillna(0).astype(np.uint16)
+    df["cells_affected"] = df["cells_affected"].fillna(0).astype(np.uint32)
+    df["total_cells"] = df["total_cells"].fillna(0).astype(np.uint32)
     df["population_affected_n"] = (
         df["population_affected_n"].fillna(0).astype(np.uint64)
     )
@@ -552,6 +552,7 @@ def process_to_stata(df, gdf, parquet_paths, shockname):
 
     # Add the data to the gdf
     out_df = gdf.merge(pivot, on="ID", validate="1:m", how="outer")
+    out_df.columns = out_df.columns.str.lower()
 
     return out_df
 
