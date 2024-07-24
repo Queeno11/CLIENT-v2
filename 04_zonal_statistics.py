@@ -1,9 +1,6 @@
 if __name__ == "__main__":
 
     import os
-    import gc
-    import time
-    import psutil
     import cupy as cp
     import numpy as np
     import xarray as xr
@@ -36,7 +33,7 @@ if __name__ == "__main__":
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
-    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
+    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
     adm_grids = {"WB": WB_adm_id_full, "IPUMS": IPUMS_adm_id_full}
 
     # Shock
@@ -47,11 +44,10 @@ if __name__ == "__main__":
         {"band_data": "flooded"}
     )
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
-
     shocks = {
-        # "drought": droughts,
-        # "floods": floods,
         "hurricanes": hurricanes,
+        "floods": floods,
+        "drought": droughts,
     }
 
     ### Run process
@@ -65,60 +61,49 @@ if __name__ == "__main__":
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
         print("--------------------------------")
-        print("--------------------------------")
         print(f"---   {admname} ADM boundaries   ---")
-        print("--------------------------------")
         print("--------------------------------")
 
         for shockname, shock in shocks.items():
 
-            print(f"Processing {shockname}...")
+            print(f"----- Processing {shockname}...")
 
             shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
                 shock, adm_id_full
             )
 
-            # Load in memory if there's enough space
-            shock_loaded = False
-            memory_required = shock.nbytes
-            available_memory = psutil.virtual_memory().available
-            if memory_required < available_memory:
-                print("Loading shock in memory...")
-                shock = shock.load()
-                shock_loaded = True
-
             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
-                chunk_start_time = time.time()
 
                 datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
                     chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
                 )
-                chunk_shock = shock.sel(datafilter)
-                chunk_adm_id = adm_id_full.sel(datafilter)  # .load()
+
+                # Load in memory if there's enough space
+                chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
+                chunk_adm_id = adm_id_full.sel(datafilter)
+
                 if (chunk_adm_id != 99999).sum() == 0:
                     print("No data in this chunk, skipping...")
                     continue
 
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
+
                     chunk_var = chunk_shock[var]
-                    # shock_loaded = False
-                    # if shock_loaded is False:
-                    #     chunk_var = chunk_var.load()
 
                     ## Loop over years
                     # Note: data in this NC file will query faster if chunked in the same way as the data is stored
                     #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
                     #   send to cupy faster. That's why we loop over chunks first and then years.
+                    gpw_year_prev = 0
                     for year in tqdm(shock.year.values, leave=False):
                         out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
                         if os.path.exists(out_path):
                             continue
 
-                        gpw_year_prev = 0
                         chunk_year_var = chunk_var.sel(year=year)
 
                         gpw_year = utils.find_gpw_closes_year(year)
@@ -131,6 +116,7 @@ if __name__ == "__main__":
                                     datafilter
                                 )
                                 chunk_year_gpw = cp.asarray(chunk_year_gpw.values)
+                                gpw_year_prev = gpw_year
 
                         if needs_interp:
                             chunk_year_var = utils.intepolate_era5_data(
@@ -146,39 +132,3 @@ if __name__ == "__main__":
                             chunk_year_var, chunk_adm_id, chunk_year_gpw
                         )
                         df.to_parquet(out_path)
-
-                        # Cleanup variables
-                        del df, chunk_year_var
-                        gc.collect()
-
-                    del chunk_var
-                    gc.collect()
-
-            # Cleanup variables
-            chunk_shock = None
-            chunk_adm_id = None
-            chunk_year_shock = None
-            chunk_year_gpw = None
-            gc.collect()
-
-        adm_id_full = None
-
-        for shockname, shock in shocks.items():
-
-            print(f"Exporting {shockname}...")
-
-            ## Save shock data
-            # Compile all the dataframes and generate country dtas
-            out_df, variables = utils.process_all_dataframes(
-                WB_data, chunks_path, shockname
-            )
-
-            # Export minimal version
-            out_df[
-                ["ADM0_CODE", "ADM1_CODE", "ADM2_CODE", "year", "ID"] + variables
-            ].to_stata(os.path.join(DATA_OUT, f"{admname}_{shockname}_by_admlast.dta"))
-            # # Export full version with geometry
-            # out_df.to_feather(
-            #     os.path.join(DATA_OUT, f"{shockname}_by_admlast.feather"),
-            # )
-            break
