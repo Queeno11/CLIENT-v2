@@ -30,7 +30,10 @@ if __name__ == "__main__":
     # World Bank country bounds and IDs
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
-    gdfs = {"WB": WB_data, "IPUMS": IPUMS_data}
+    gdfs = {
+        # "WB": WB_data,
+        "IPUMS": IPUMS_data
+    }
 
     # Shock
     shocks = [
@@ -53,28 +56,36 @@ if __name__ == "__main__":
 
             ### CSV VERSION (LONG)
             outpath = os.path.join(DATA_OUT, f"{admname}_{shockname}_long.csv")
-            if os.path.exists(outpath):
-                out_df = pd.read_csv(outpath)
-                print(f"File {shockname} already exists, skipping...")
-            else:
-                # Compile all the dataframes and generate country dtas
-                out_df = utils.process_all_dataframes(gdf, chunks_path, shockname)
-                out_df.to_csv(outpath)
-                print(f"Se creó {outpath}")
+            # if os.path.exists(outpath):
+            #     out_df = pd.read_csv(outpath)
+            #     print(f"File {shockname} already exists, skipping...")
+            # else:
+
+            # Compile all the dataframes and generate country dtas
+            out_df = utils.process_all_dataframes(gdf, chunks_path, shockname)
+            assert out_df.area_affected.max() <= 1, "Area affected > 1"
+            assert out_df.population_affected.max() <= 1, "Pop affected > 1"
+            out_df.to_csv(outpath)
+            print(f"Se creó {outpath}")
 
             if admname != "IPUMS":
                 continue
 
             ### STATA VERSION (WIDE) (only for IPUMS)
             outpath = os.path.join(DATA_OUT, f"{admname}_{shockname}_wide.dta")
-            if os.path.exists(outpath):
-                print(f"File {shockname} already exists, skipping...")
-                continue
-            else:
-                out_df = utils.process_to_stata(out_df, gdf, chunks_path, shockname)
-
-                # Export minimal version
-                out_df.drop(columns=["geometry", "Unnamed: 0"]).to_stata(
-                    outpath,
-                    write_index=False,
-                )
+            # if os.path.exists(outpath):
+            #     print(f"File {shockname} already exists, skipping...")
+            #     continue
+            # else:
+            out_df = utils.process_to_stata(out_df, gdf, chunks_path, shockname)
+            assert (
+                out_df.duplicated(
+                    subset=["cntry_code", "geolevel1", "geolevel2", "year"]
+                ).sum()
+                == 0
+            ), "Duplicated rows"
+            # Export minimal version
+            out_df.drop(columns=["unnamed: 0", "geometry"]).to_stata(
+                outpath,
+                write_index=False,
+            )
