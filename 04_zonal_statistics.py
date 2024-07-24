@@ -30,8 +30,6 @@ if __name__ == "__main__":
 
     # World Bank country bounds and IDs (we only get the total bounds from here)
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
-    IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
-    gdfs = {"WB": WB_data, "IPUMS": IPUMS_data}
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
@@ -48,8 +46,8 @@ if __name__ == "__main__":
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
     shocks = {
         "hurricanes": hurricanes,
-        "drought": droughts,
         "floods": floods,
+        "drought": droughts,
     }
 
     ### Run process
