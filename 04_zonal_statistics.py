@@ -34,7 +34,10 @@ if __name__ == "__main__":
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
-    adm_grids = {"WB": WB_adm_id_full, "IPUMS": IPUMS_adm_id_full}
+    adm_grids = {
+        # "WB": WB_adm_id_full,
+        "IPUMS": IPUMS_adm_id_full
+    }
 
     ### Shocks
     # To add new data:
@@ -60,11 +63,11 @@ if __name__ == "__main__":
     )
 
     shocks = {
-        # "hurricanes": hurricanes,
         # "floods": floods,
+        # "hurricanes": hurricanes,
         # "drought": droughts,
-        "heatwaves": heatwaves,
-        "coldwaves": coldwaves,
+        # "heatwaves": heatwaves,
+        # "coldwaves": coldwaves,
         "intenserain": intenserain,
     }
 
@@ -89,9 +92,6 @@ if __name__ == "__main__":
             shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
                 shock, adm_id_full
             )
-            print(shock)
-            print(needs_interp)
-            print(needs_coarsen)
 
             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues

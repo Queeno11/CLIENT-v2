@@ -391,6 +391,9 @@ def parse_filename(f, shockname):
         "drought",
         "floods",
         "hurricanes",
+        "heatwaves",
+        "coldwaves",
+        "intenserain",
     ], "Invalid shockname. If you are adding a new shockname, please add it to the list in utils.parse_filename()."
     if shockname == "drought":
         return {
@@ -412,6 +415,27 @@ def parse_filename(f, shockname):
             "threshold": f[3],  # buffer size, ej. b50
             "year": f[4],
             "chunk": f[5],
+        }
+    elif shockname == "heatwaves":
+        return {
+            "variable": f"{f[1][:2]}",  # ej. category 5
+            "threshold": f[1][2:],  # split 4025 in 40 and 25
+            "year": f[2],
+            "chunk": f[3],
+        }
+    elif shockname == "coldwaves":
+        return {
+            "variable": f"{f[1][:2]}",  # ej. category 5
+            "threshold": f[1][2:],  # split 4025 in 40 and 25
+            "year": f[2],
+            "chunk": f[3],
+        }
+    elif shockname == "intenserain":
+        return {
+            "variable": f[1],  # rx1day
+            "threshold": f[2],  # 200
+            "year": f[3],
+            "chunk": f[4],
         }
 
 

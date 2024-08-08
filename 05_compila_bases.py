@@ -31,15 +31,18 @@ if __name__ == "__main__":
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
     gdfs = {
-        # "WB": WB_data,
-        "IPUMS": IPUMS_data
+        "IPUMS": IPUMS_data,
+        "WB": WB_data,
     }
 
     # Shock
     shocks = [
-        "floods",
-        "hurricanes",
-        "drought",
+        # "floods",
+        # "hurricanes",
+        # "drought",
+        "heatwaves",
+        "coldwaves",
+        "intenserain",
     ]
 
     for admname, gdf in gdfs.items():
