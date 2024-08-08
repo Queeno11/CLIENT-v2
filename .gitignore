@@ -1,3 +1,5 @@
+*.sbn
+*.sbx
 *.nc
 *.xls
 *.xlsx

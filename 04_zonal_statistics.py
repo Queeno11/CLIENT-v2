@@ -25,7 +25,7 @@ if __name__ == "__main__":
 
     print("Loading data...")
 
-    ## Global Loads
+    ### Global Loads
     # Population data is loaded in the loop
 
     # World Bank country bounds and IDs (we only get the total bounds from here)
@@ -34,20 +34,41 @@ if __name__ == "__main__":
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
-    adm_grids = {"WB": WB_adm_id_full, "IPUMS": IPUMS_adm_id_full}
+    adm_grids = {
+        # "WB": WB_adm_id_full,
+        "IPUMS": IPUMS_adm_id_full
+    }
 
-    # Shock
+    ### Shocks
+    # To add new data:
+    #   - Create a yearly grid with a boolean variable (1 if the event happened, 0 otherwise)
+    #   - Save it in the DATA_OUT folder
+    #   - Add it to the shocks dictionary
+    #   - Variables can be named whatever you want, but the grid has to have the following dimensions:
+    #       - x: Longitude
+    #       - y: Latitude
+    #       - year: Year
+    #   - The grid has to be ascending in x and descending in y.
+    #   - It is recommended to chunk the grid in the same way as the data is stored (lat-lon)
+
+    hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
+    heatwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_heatwaves_yearly.nc")
+    coldwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_coldwaves_yearly.nc")
+    intenserain = xr.open_dataset(rf"{DATA_OUT}/CCKP_intenserain_yearly.nc")
     droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc").drop_duplicates(
         dim="x"
     )
     floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
         {"band_data": "flooded"}
     )
-    hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
+
     shocks = {
-        "hurricanes": hurricanes,
-        "floods": floods,
-        "drought": droughts,
+        # "floods": floods,
+        # "hurricanes": hurricanes,
+        # "drought": droughts,
+        # "heatwaves": heatwaves,
+        # "coldwaves": coldwaves,
+        "intenserain": intenserain,
     }
 
     ### Run process
