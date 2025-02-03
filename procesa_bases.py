@@ -3,18 +3,14 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from tqdm import tqdm
-import hashlib
 import matplotlib.pyplot as plt
 import warnings
 
-import dask
 import xarray as xr
-import xrspatial
 from dask.diagnostics import ProgressBar
 from geocube.api.core import make_geocube
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 
 PATH = "D:\World Bank\CLIENT v2"
 DATA_RAW = rf"{PATH}\Data\Data_raw"
@@ -72,12 +68,10 @@ def load_precipitation_data():
     era5 = era5.rename({"latitude": "y", "longitude": "x"})
     return
 
-def load_IPUMS_country_data(wb_map):
-    from osgeo import gdal
+def load_IPUMS_country_data(wb_map, keep_name=False):
     import geopandas as gpd
     from IPython.display import display
 
-    gdal.SetConfigOption('SHAPE_RESTORE_SHX', 'YES')
 
     countries_aggregate_geolevel2 = [
         "ls", # Lesotho
@@ -96,10 +90,17 @@ def load_IPUMS_country_data(wb_map):
     # gdf.loc[gdf.CNTRY_NAME == "Thailand", "GEOLEVEL1"] = gdf.loc[gdf.CNTRY_NAME == "Thailand", "GEOLEVEL2"].str[:6]
     
     id_cols = ["CNTRY_CODE", "GEOLEVEL1", "GEOLEVEL2"] 
+    if keep_name:
+        id_cols += ["CNTRY_NAME","ADMIN_NAME"]
+        
     gdf = gdf[["geometry"] + id_cols]
     # AUTOMATED FIXES    
     for col in id_cols:
-        gdf[col] = pd.to_numeric(gdf[col]).fillna(0)
+        if (col == "CNTRY_NAME") | (col == "ADMIN_NAME"):
+            gdf[col] = gdf[col].apply(fix_encoding)
+        else:
+            gdf[col] = pd.to_numeric(gdf[col]).fillna(0)
+        
     countries_with_no_dissagregation = [246, 348, 528]
     gdf = gdf[~gdf.GEOLEVEL2.isin(countries_with_no_dissagregation)] # Drop countries with no disagregation
     gdf = fix_IPUMS_missing_geolevels(gdf)
@@ -321,3 +322,13 @@ def fix_IPUMS_invalid_geolevel1(gdf):
 #         gdf.loc[gdf.CNTRY_CODE == country, "GEOLEVEL2"] = gdf.loc[gdf.CNTRY_CODE == country, "GEOLEVEL2"].astype(str).str[:6].astype(int)
 
 #     return gdf
+
+def fix_encoding(text):
+    if pd.isna(text):
+        return text
+    try:
+        return text.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        print(text)
+        return text  # If it fails, return original
+    
