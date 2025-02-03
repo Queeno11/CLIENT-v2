@@ -89,11 +89,11 @@ def validate_climate_dataset(df, gdf):
     '''
     from tqdm.autonotebook import tqdm
     import numpy as np
-    
+    id_cols = ["adm2_code", "adm1_code", "adm0_code"]
     gdf = gdf.reset_index(drop=True)
 
     # Pre-check duplicates on gdf
-    gdf_duplicates = gdf.duplicated(subset=["adm2_code", "adm1_code", "adm0_code"]).sum()
+    gdf_duplicates = gdf.duplicated(subset=id_cols).sum()
     if gdf_duplicates > 0:
         raise ValueError(f"GeoDataFrame has duplicates. {gdf_duplicates} duplicates found.")
     
@@ -111,8 +111,8 @@ def validate_climate_dataset(df, gdf):
 
         # Test 1: Check if the two DataFrames have matching IDs
         ids_match = np.array_equal(
-            df_filtered[["adm2_code", "adm1_code", "adm0_code"]].values,
-            gdf[["adm2_code", "adm1_code", "adm0_code"]].values
+            df_filtered[id_cols].sort_values(by=id_cols).values,
+            gdf[id_cols].sort_values(by=id_cols).values
         )
 
         if not ids_match:
@@ -121,7 +121,7 @@ def validate_climate_dataset(df, gdf):
             )                    
             
         # Test 2: no duplicates
-        duplicates = df_filtered.duplicated(subset=["adm2_code", "adm1_code", "adm0_code"]).sum() > 0
+        duplicates = df_filtered.duplicated(subset=id_cols).sum() > 0
 
         if duplicates:
             raise ValueError(
