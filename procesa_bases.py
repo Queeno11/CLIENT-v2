@@ -329,6 +329,5 @@ def fix_encoding(text):
     try:
         return text.encode("latin-1").decode("utf-8")
     except (UnicodeEncodeError, UnicodeDecodeError):
-        print(text)
         return text  # If it fails, return original
     

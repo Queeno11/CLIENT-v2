@@ -206,6 +206,10 @@ def validate_hc_merge(df, gdf):
             )                    
             
         # print("Number of polygons without data:", merged[merged["_merge"] == "left_only"].shape[0])
+    
+    gdf.drop(columns=["gdf_ismerged"], inplace=True)
+    df.drop(columns=["df_ismerged"], inplace=True)
+    gc.collect()
     return None
 
 
