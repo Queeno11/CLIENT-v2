@@ -1,4 +1,4 @@
-
+import gc
 
 def assert_correct_colnames(df, dataset_name="climate"):
     ''' Ensures dataframe has the correct column names for the webpage.
@@ -143,7 +143,9 @@ def validate_climate_dataset(df, gdf):
             raise ValueError(
                 f"Merge is not 1:1 for year {year}, threshold {threshold}, measure {measure}, variable {variable}. There are {duplicates} duplicates in the filtered dataframe."
             )
-                                                
+    
+    gc.collect()                                
+
     return None
                     
 def validate_hc_merge(df, gdf):
@@ -180,16 +182,20 @@ def validate_hc_merge(df, gdf):
     
     # Grouping df by the unique combinations of year, threshold, measure, and variable
     selectors = ["s1", "s2", "s3", "s4", "s5", "outcome"]
-    grouped = df.groupby(selectors)
+    grouped = df.fillna(0).groupby(selectors)
     if grouped.ngroups == 0:
         raise ValueError("No groups found in the dataframe. Check the input data...")
     
-    for selection, group in tqdm(grouped, desc="Checking groups"):
-        
+    for selection, group in tqdm(grouped, desc="Validating merges..."):
+
         # Reset index of the group
         # df_filtered = group.reset_index(drop=True)
+        try:
+            merged = gdf.merge(group, on=id_cols, how="outer", validate="1:1", indicator=True)
+        except Exception as e:
+            print(e)
+            raise ValueError(f"Error in: {selection}, {group}")            
         
-        merged = gdf.merge(group, on=id_cols, how="outer", validate="1:1", indicator=True)
         # merged.loc[merged["gdf_ismerge"] & merged["df_ismerge"], "_merge"] = "both"
         # merged.loc[merged["gdf_ismerge"].isna() & merged["df_ismerge"], "_merge"] = "right_only"
         # merged.loc[merged["gdf_ismerge"] & merged["df_ismerge"].isna(), "_merge"] = "left_only"
@@ -199,5 +205,25 @@ def validate_hc_merge(df, gdf):
                 f"Merge is not 1:1 for {selection}. The IDs do not match."
             )                    
             
-        print("Number of polygons without data:", merged[merged["_merge"] == "left_only"].shape[0])
+        # print("Number of polygons without data:", merged[merged["_merge"] == "left_only"].shape[0])
     return None
+
+
+if __name__ == "__main__":
+    import pandas as pd
+
+    print("Testing CLIMATE DATASET:")
+    # Load the data
+    gdf = pd.read_csv(r"D:\World Bank\CLIENT v2\Data\Data_out\for webpage\WB_map.csv")
+
+    for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
+        
+        print("Verifying", shock)
+        df = pd.read_csv(rf"D:\World Bank\CLIENT v2\Data\Data_out\for webpage\WB_{shock}.csv")
+        
+        assert_correct_colnames(df)
+        assert_correct_shape(df, gdf)
+        # validate_climate_dataset(df, gdf)
+        
+    print("Testing HC DATASET:")
+    print("Dataset is validated during generation due to memory constraints.")
