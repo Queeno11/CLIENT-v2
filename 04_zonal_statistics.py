@@ -96,7 +96,7 @@ if __name__ == "__main__":
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
-                chunk_number = 5
+
                 datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
                     chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
                 )
