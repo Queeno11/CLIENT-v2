@@ -1,22 +1,20 @@
-import re
 import os
 import time
 import pyarrow as pa
 import pyarrow.parquet as pq
-import glob
 import psutil
 
 try:
     import cupy as cp
     from cupyx.scipy.interpolate import RegularGridInterpolator
-except:
+except Exception as e:
+    print("Cupy was not imported. Please install it to use the functions in this script.")
+    print(e)
     pass
 import numpy as np
-import xarray as xr
 import pandas as pd
 import rasterio
 from tqdm import tqdm
-from rasterio.windows import Window
 from decorator import decorator
 from line_profiler import LineProfiler
 
@@ -146,13 +144,14 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     if verbose:
         print("Interpolating...")
         t0 = time.time()
+        
     ## Interpolate droughts like adm_id_da
     # Define the grid
     lat = cp.asarray(era5_da.y.values, dtype="float32")
     lon = cp.asarray(era5_da.x.values, dtype="float32")
     spi = cp.asarray(era5_da.values, dtype="bool")
     interpolate = RegularGridInterpolator(
-        (lat, lon), spi, method="nearest", bounds_error=False
+        (lat, lon), spi, method="nearest", bounds_error=False, fill_value=0
     )
 
     # Interpolate
