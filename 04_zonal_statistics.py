@@ -1,10 +1,9 @@
 if __name__ == "__main__":
 
     import os
+    import gc
     import cupy as cp
-    import numpy as np
     import xarray as xr
-    import pandas as pd
     import geopandas as gpd
     import utils
     from tqdm import tqdm
@@ -35,8 +34,8 @@ if __name__ == "__main__":
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
     adm_grids = {
-        # "WB": WB_adm_id_full,
-        "IPUMS": IPUMS_adm_id_full
+        "IPUMS": IPUMS_adm_id_full,
+        "WB": WB_adm_id_full,
     }
 
     ### Shocks
@@ -63,16 +62,19 @@ if __name__ == "__main__":
     )
 
     shocks = {
-        # "floods": floods,
-        # "hurricanes": hurricanes,
-        # "drought": droughts,
-        # "heatwaves": heatwaves,
-        # "coldwaves": coldwaves,
+        "floods": floods,
+        "hurricanes": hurricanes,
+        "drought": droughts,
+        "heatwaves": heatwaves,
+        "coldwaves": coldwaves,
         "intenserain": intenserain,
     }
 
     ### Run process
     for admname, adm_id_full in adm_grids.items():
+        print("--------------------------------")
+        print(f"---   {admname} ADM boundaries   ---")
+        print("--------------------------------")
         adm_id_full = (
             adm_id_full.fillna(99999)  # Fill with 99999 to avoid float issues
             .astype(int)
@@ -81,9 +83,6 @@ if __name__ == "__main__":
         # Create chunks_path if it doesn't exist
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
-        print("--------------------------------")
-        print(f"---   {admname} ADM boundaries   ---")
-        print("--------------------------------")
 
         for shockname, shock in shocks.items():
 
@@ -93,11 +92,11 @@ if __name__ == "__main__":
                 shock, adm_id_full
             )
 
-            ## Loop over chunks
+             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
-
+                chunk_number = 5
                 datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
                     chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
                 )
@@ -112,7 +111,6 @@ if __name__ == "__main__":
 
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
-
                     chunk_var = chunk_shock[var]
 
                     ## Loop over years
@@ -121,6 +119,7 @@ if __name__ == "__main__":
                     #   send to cupy faster. That's why we loop over chunks first and then years.
                     gpw_year_prev = 0
                     for year in tqdm(shock.year.values, leave=False):
+
                         out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
                         if os.path.exists(out_path):
                             continue
@@ -153,3 +152,13 @@ if __name__ == "__main__":
                             chunk_year_var, chunk_adm_id, chunk_year_gpw
                         )
                         df.to_parquet(out_path)
+        
+        df = None
+        chunk_shock = None
+        chunk_year_var = None
+        chunk_adm_id = None
+        chunk_var = None
+        adm_id_full = None
+        shock = None
+        gc.collect()
+            
