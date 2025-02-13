@@ -283,15 +283,13 @@ def load_gpw_data(GPW_PATH, datafilter=None):
     gpw = {}
     for year in [2000, 2005, 2010, 2015, 2020]:
 
-        with xr.open_dataarray(
-            rf"{GPW_PATH}/gpw_v4_population_count_rev11_{year}_30_sec.tif"
-        ) as chunk_year_gpw:
-            chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(
-                datafilter
-            )
+        chunk_year_gpw = xr.open_dataarray(rf"{GPW_PATH}/gpw_v4_population_count_rev11_{year}_30_sec.tif")
+        chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(datafilter).as_cupy()
 
-            # Convert the NumPy array to a CuPy array
-            gpw[year] = cp.asarray(chunk_year_gpw.values)
+        # Convert the NumPy array to a CuPy array
+        datayear = chunk_year_gpw.data
+        gpw[year] = datayear
+        print()
 
     return gpw
 

@@ -21,7 +21,7 @@ if __name__ == "__main__":
     PARQUET_PATH = rf"{DATA_PROC}/shocks_by_adm"
     GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
 
-    TOTAL_CHUNKS = 16
+    TOTAL_CHUNKS = 6**2
 
     print("Loading data...")
     mempool = cp.get_default_memory_pool()
@@ -34,8 +34,8 @@ if __name__ == "__main__":
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
-    WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
-    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
+    WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc", chunks="auto")["ID"]
+    IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc", chunks="auto")["ID"]
     adm_grids = {
         "IPUMS": IPUMS_adm_id_full,#.isel({"x": slice(12000,14000), "y": slice(10000,12000)}),
         "WB": WB_adm_id_full,
@@ -53,21 +53,21 @@ if __name__ == "__main__":
     #   - The grid has to be ascending in x and descending in y.
     #   - It is recommended to chunk the grid in the same way as the data is stored (lat-lon)
 
-    hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc")
-    heatwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_heatwaves_yearly.nc")
-    coldwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_coldwaves_yearly.nc")
-    intenserain = xr.open_dataset(rf"{DATA_OUT}/CCKP_intenserain_yearly.nc")
-    droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc").drop_duplicates(
+    hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc", chunks="auto")
+    heatwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_heatwaves_yearly.nc", chunks="auto")
+    coldwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_coldwaves_yearly.nc", chunks="auto")
+    intenserain = xr.open_dataset(rf"{DATA_OUT}/CCKP_intenserain_yearly.nc", chunks="auto")
+    droughts = xr.open_dataset(rf"{PATH}/Data/Data_out/ERA5_droughts_yearly.nc", chunks="auto").drop_duplicates(
         dim="x"
     )
-    # floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
+    # floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc", chunks="auto").rename(
     #     {"band_data": "flooded"}
     # )
 
     shocks = {
         # "floods": floods,
-        # "hurricanes": hurricanes,
         "drought": droughts,
+        "hurricanes": hurricanes,
         "heatwaves": heatwaves,
         "coldwaves": coldwaves,
         "intenserain": intenserain,
@@ -105,21 +105,22 @@ if __name__ == "__main__":
                 )
 
                 # Load datasets in memory if there's enough space
-                chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
                 chunk_adm_id = adm_id_full.sel(datafilter)
-                if (chunk_adm_id != 99999).sum() == 0:
-                    print("No data in this chunk, skipping...")
-                    continue
                 
+                if (chunk_adm_id != 99999).sum() == 0:
+                    # print("No data in this chunk, skipping...")
+                    continue
+
+                chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
+                                
                 ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
                 chunk_adm_id = chunk_adm_id.as_cupy()
                 gpw = utils.load_gpw_data(GPW_PATH , datafilter)
 
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
-                    chunk_var = chunk_shock[var]
-                    chunk_var = chunk_var.as_cupy()
-                    
+                    chunk_var = chunk_shock[var].load().as_cupy() # Load to VRAM
+    
                     ## Loop over years
                     # Note: data in this NC file will query faster if chunked in the same way as the data is stored
                     #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
@@ -132,11 +133,8 @@ if __name__ == "__main__":
                         #     continue
 
                         chunk_year_var = chunk_var.sel(year=year)
-
-                        gpw_year = utils.find_gpw_closes_year(year)
-                        if gpw_year != gpw_year_prev:
-                            chunk_year_gpw = gpw[gpw_year]
-                            gpw_year_prev = gpw_year
+                            
+ 
 
                         if needs_interp:
                             chunk_year_var = utils.interpolate_era5_data(
@@ -149,13 +147,18 @@ if __name__ == "__main__":
 
                         ### Groupby
                         df = utils.compute_zonal_statistics(
-                            chunk_year_var, chunk_adm_id.data, chunk_year_gpw
+                            chunk_year_var, chunk_adm_id.data, gpw[utils.find_gpw_closes_year(year)]
                         )
                         df.to_parquet(out_path)
                         
-                df = None
-                chunk_var = None    
-                chunk_year_var = None
+                        chunk_year_var = None
+                        df = None
+
+                    chunk_var = None    
+                    mempool.free_all_blocks()
+                    pinned_mempool.free_all_blocks()
+
+                chunk_shock = None
                 mempool.free_all_blocks()
                 pinned_mempool.free_all_blocks()
 
@@ -163,7 +166,8 @@ if __name__ == "__main__":
         adm_id_full = None
         shock = None
         gc.collect()
+
         mempool.free_all_blocks()
         pinned_mempool.free_all_blocks()
 
-            
+        
