@@ -24,6 +24,8 @@ if __name__ == "__main__":
     TOTAL_CHUNKS = 16
 
     print("Loading data...")
+    mempool = cp.get_default_memory_pool()
+    pinned_mempool = cp.get_default_pinned_memory_pool()
 
     ### Global Loads
     # Population data is loaded in the loop
@@ -109,10 +111,8 @@ if __name__ == "__main__":
                     print("No data in this chunk, skipping...")
                     continue
                 
-                # This chunk is loaded in CPU memory, but we'll send it to GPU so it does not move in each loop iteration
+                ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
                 chunk_adm_id = chunk_adm_id.as_cupy()
-                
-                # Load GPW data as cupy arrays
                 gpw = utils.load_gpw_data(GPW_PATH , datafilter)
 
                 ## Loop over variables
@@ -156,10 +156,14 @@ if __name__ == "__main__":
                 df = None
                 chunk_var = None    
                 chunk_year_var = None
-                gc.collect()
+                mempool.free_all_blocks()
+                pinned_mempool.free_all_blocks()
 
         chunk_adm_id = None
         adm_id_full = None
         shock = None
         gc.collect()
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+
             
