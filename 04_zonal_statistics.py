@@ -21,8 +21,6 @@ if __name__ == "__main__":
     PARQUET_PATH = rf"{DATA_PROC}/shocks_by_adm"
     GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
 
-    TOTAL_CHUNKS = 6**2
-
     print("Loading data...")
     mempool = cp.get_default_memory_pool()
     pinned_mempool = cp.get_default_pinned_memory_pool()
@@ -57,15 +55,15 @@ if __name__ == "__main__":
     heatwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_heatwaves_yearly.nc", chunks="auto")
     coldwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_coldwaves_yearly.nc", chunks="auto")
     intenserain = xr.open_dataset(rf"{DATA_OUT}/CCKP_intenserain_yearly.nc", chunks="auto")
-    droughts = xr.open_dataset(rf"{PATH}/Data/Data_out/ERA5_droughts_yearly.nc", chunks="auto").drop_duplicates(
+    droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc", chunks="auto").drop_duplicates(
         dim="x"
     )
-    # floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc", chunks="auto").rename(
-    #     {"band_data": "flooded"}
-    # )
+    floods = xr.open_dataset(rf"{PATH}/Data/Data_out/GFD_floods_yearly.nc", chunks="auto").rename(
+        {"band_data": "flooded"}
+    )
 
     shocks = {
-        # "floods": floods,
+        "floods": floods,
         "drought": droughts,
         "hurricanes": hurricanes,
         "heatwaves": heatwaves,
@@ -90,7 +88,10 @@ if __name__ == "__main__":
         for shockname, shock in shocks.items():
 
             print(f"----- Processing {shockname}...")
-
+            if shockname=="droughts":
+                TOTAL_CHUNKS = 4**2
+            else:
+                TOTAL_CHUNKS = 6**2
             shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
                 shock, adm_id_full
             )
