@@ -1,10 +1,10 @@
 if __name__ == "__main__":
 
     import os
+    import gc
     import cupy as cp
-    import numpy as np
     import xarray as xr
-    import pandas as pd
+    import cupy_xarray  # Adds .cupy to Xarray objects
     import geopandas as gpd
     import utils
     from tqdm import tqdm
@@ -17,13 +17,15 @@ if __name__ == "__main__":
     PATH = "/mnt/d/World Bank/CLIENT v2"
     DATA_RAW = rf"{PATH}/Data/Data_raw"
     DATA_PROC = rf"{PATH}/Data/Data_proc"
-    DATA_OUT = rf"{PATH}/Data/Data_out"
+    DATA_OUT = rf"/home/nico/data"
     PARQUET_PATH = rf"{DATA_PROC}/shocks_by_adm"
     GPW_PATH = rf"/mnt/d/Datasets/Gridded Population of the World"
 
     TOTAL_CHUNKS = 16
 
     print("Loading data...")
+    mempool = cp.get_default_memory_pool()
+    pinned_mempool = cp.get_default_pinned_memory_pool()
 
     ### Global Loads
     # Population data is loaded in the loop
@@ -35,8 +37,8 @@ if __name__ == "__main__":
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc")["ID"]
     adm_grids = {
-        # "WB": WB_adm_id_full,
-        "IPUMS": IPUMS_adm_id_full
+        "IPUMS": IPUMS_adm_id_full,#.isel({"x": slice(12000,14000), "y": slice(10000,12000)}),
+        "WB": WB_adm_id_full,
     }
 
     ### Shocks
@@ -58,21 +60,24 @@ if __name__ == "__main__":
     droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc").drop_duplicates(
         dim="x"
     )
-    floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
-        {"band_data": "flooded"}
-    )
+    # floods = xr.open_dataset(rf"{DATA_OUT}/GFD_floods_yearly.nc").rename(
+    #     {"band_data": "flooded"}
+    # )
 
     shocks = {
         # "floods": floods,
         # "hurricanes": hurricanes,
-        # "drought": droughts,
-        # "heatwaves": heatwaves,
-        # "coldwaves": coldwaves,
+        "drought": droughts,
+        "heatwaves": heatwaves,
+        "coldwaves": coldwaves,
         "intenserain": intenserain,
     }
 
     ### Run process
     for admname, adm_id_full in adm_grids.items():
+        print("--------------------------------")
+        print(f"---   {admname} ADM boundaries   ---")
+        print("--------------------------------")
         adm_id_full = (
             adm_id_full.fillna(99999)  # Fill with 99999 to avoid float issues
             .astype(int)
@@ -81,9 +86,6 @@ if __name__ == "__main__":
         # Create chunks_path if it doesn't exist
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
-        print("--------------------------------")
-        print(f"---   {admname} ADM boundaries   ---")
-        print("--------------------------------")
 
         for shockname, shock in shocks.items():
 
@@ -93,7 +95,7 @@ if __name__ == "__main__":
                 shock, adm_id_full
             )
 
-            ## Loop over chunks
+             ## Loop over chunks
             #   Data is dividied in chunks (sections of the world) to avoid memory issues
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
@@ -102,54 +104,66 @@ if __name__ == "__main__":
                     chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
                 )
 
-                # Load in memory if there's enough space
+                # Load datasets in memory if there's enough space
                 chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
                 chunk_adm_id = adm_id_full.sel(datafilter)
-
                 if (chunk_adm_id != 99999).sum() == 0:
                     print("No data in this chunk, skipping...")
                     continue
+                
+                ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
+                chunk_adm_id = chunk_adm_id.as_cupy()
+                gpw = utils.load_gpw_data(GPW_PATH , datafilter)
 
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
-
                     chunk_var = chunk_shock[var]
-
+                    chunk_var = chunk_var.as_cupy()
+                    
                     ## Loop over years
                     # Note: data in this NC file will query faster if chunked in the same way as the data is stored
                     #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
                     #   send to cupy faster. That's why we loop over chunks first and then years.
                     gpw_year_prev = 0
                     for year in tqdm(shock.year.values, leave=False):
+
                         out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
-                        if os.path.exists(out_path):
-                            continue
+                        # if os.path.exists(out_path):
+                        #     continue
 
                         chunk_year_var = chunk_var.sel(year=year)
 
                         gpw_year = utils.find_gpw_closes_year(year)
                         if gpw_year != gpw_year_prev:
-                            # Load Population data as cupy array
-                            with xr.open_dataarray(
-                                rf"{GPW_PATH}/gpw_v4_population_count_rev11_{gpw_year}_30_sec.tif"
-                            ) as chunk_year_gpw:
-                                chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(
-                                    datafilter
-                                )
-                                chunk_year_gpw = cp.asarray(chunk_year_gpw.values)
-                                gpw_year_prev = gpw_year
+                            chunk_year_gpw = gpw[gpw_year]
+                            gpw_year_prev = gpw_year
 
                         if needs_interp:
-                            chunk_year_var = utils.intepolate_era5_data(
+                            chunk_year_var = utils.interpolate_era5_data(
                                 chunk_year_var,
                                 chunk_adm_id,
                                 verbose=False,
                             )
                         else:
-                            chunk_year_var = chunk_year_var.values
+                            chunk_year_var = chunk_year_var.data
 
                         ### Groupby
                         df = utils.compute_zonal_statistics(
-                            chunk_year_var, chunk_adm_id, chunk_year_gpw
+                            chunk_year_var, chunk_adm_id.data, chunk_year_gpw
                         )
                         df.to_parquet(out_path)
+                        
+                df = None
+                chunk_var = None    
+                chunk_year_var = None
+                mempool.free_all_blocks()
+                pinned_mempool.free_all_blocks()
+
+        chunk_adm_id = None
+        adm_id_full = None
+        shock = None
+        gc.collect()
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+
+            

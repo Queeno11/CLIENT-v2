@@ -1,22 +1,21 @@
-import re
 import os
 import time
 import pyarrow as pa
 import pyarrow.parquet as pq
-import glob
 import psutil
 
 try:
     import cupy as cp
     from cupyx.scipy.interpolate import RegularGridInterpolator
-except:
+except Exception as e:
+    print("Cupy was not imported. Please install it to use the functions in this script.")
+    print(e)
     pass
 import numpy as np
-import xarray as xr
 import pandas as pd
-import rasterio
+import xarray as xr
+import cupy_xarray  # Adds .cupy to Xarray objects
 from tqdm import tqdm
-from rasterio.windows import Window
 from decorator import decorator
 from line_profiler import LineProfiler
 
@@ -47,9 +46,9 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
     --------
     pandas.DataFrame: Zonal statistics aggregated by administrative unit.
     """
-    groups = cp.asarray(adm_id.values.flatten())
-    population_values = cp.asarray(year_gpw.flatten(), dtype=np.float32)
-    area_values = cp.asarray(datavar.flatten())
+    groups = adm_id.flatten()
+    population_values = year_gpw.flatten()
+    area_values = datavar.flatten()
 
     assert (
         groups.shape == area_values.shape == population_values.shape
@@ -121,12 +120,12 @@ def get_interpolate_xy(era5_da, adm_id_da):
     # New grid based on adm_id_da
     new_lat = cp.asarray(adm_id_da.y)
     new_lon = cp.asarray(adm_id_da.x)
-    era5_new_grid = np.meshgrid(new_lat, new_lon, indexing="ij")
+    era5_new_grid = cp.meshgrid(new_lat, new_lon, indexing="ij")
 
     return era5_original_grid, era5_new_grid
 
 
-def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
+def interpolate_era5_data(era5_da, adm_id_da, verbose=False):
     """Interpolate ERA5 data to the adm_id_da grid using cupy and cupyx
 
     Parameters:
@@ -146,19 +145,20 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     if verbose:
         print("Interpolating...")
         t0 = time.time()
+        
     ## Interpolate droughts like adm_id_da
     # Define the grid
     lat = cp.asarray(era5_da.y.values, dtype="float32")
     lon = cp.asarray(era5_da.x.values, dtype="float32")
-    spi = cp.asarray(era5_da.values, dtype="bool")
+    spi = era5_da.data
     interpolate = RegularGridInterpolator(
-        (lat, lon), spi, method="nearest", bounds_error=False
+        (lat, lon), spi, method="nearest", bounds_error=False, fill_value=0
     )
 
     # Interpolate
     new_lat = cp.asarray(adm_id_da.y)
     new_lon = cp.asarray(adm_id_da.x)
-    new_lat, new_lon = np.meshgrid(new_lat, new_lon, indexing="ij")
+    new_lat, new_lon = cp.meshgrid(new_lat, new_lon, indexing="ij")
     era5_interp = interpolate((new_lat, new_lon))
 
     if verbose:
@@ -266,40 +266,32 @@ def find_gpw_closes_year(year):
     return min(years, key=lambda x: abs(x - year))
 
 
-def load_gpw_data(year, bounds=None):
-    """Load the GPW data for given year as a CuPy array.
+def load_gpw_data(GPW_PATH, datafilter=None):
+    """Load the GPW data for all the years as cupy arrays.
 
     If bounds are provided, the data is clipped to the bounding box.
 
     Parameters:
     -----------
-    year: int
-        Year of the GPW data to load.
     bounds: tuple
         Bounding box coordinates (left, bottom, right, top) to load the data.
+
+    Returns:
+    --------
+    dict: Dictionary with the GPW data for each year as cupy arrays. Keys are the years (2000, 2005, 2010, 2015 and 2020). 
     """
-    if year not in [2000, 2005, 2010, 2015, 2020]:
-        raise ValueError("Year must be one of 2000, 2005, 2010, 2015 or 2020.")
+    gpw = {}
+    for year in [2000, 2005, 2010, 2015, 2020]:
 
-    with rasterio.open(
-        rf"/mnt/d/datasets/Gridded Population of the World/gpw_v4_population_count_rev11_{year}_30_sec.tif",
-    ) as src:
-        window = None
-        if bounds is not None:
-            # Read the data into a NumPy array
-            window = rasterio.windows.from_bounds(
-                left=bounds[0],
-                bottom=bounds[1],
-                right=bounds[2],
-                top=bounds[3],
-                transform=src.transform,
+        with xr.open_dataarray(
+            rf"{GPW_PATH}/gpw_v4_population_count_rev11_{year}_30_sec.tif"
+        ) as chunk_year_gpw:
+            chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(
+                datafilter
             )
-        data = src.read(1, window=window)  # Assuming single band, read the first band
-        # Verify we've loaded data
-        assert data is not None, "No data loaded from the GPW raster."
 
-        # Convert the NumPy array to a CuPy array
-        gpw = cp.asarray(data)
+            # Convert the NumPy array to a CuPy array
+            gpw[year] = cp.asarray(chunk_year_gpw.values)
 
     return gpw
 
