@@ -35,7 +35,7 @@ if __name__ == "__main__":
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc", chunks="auto")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc", chunks="auto")["ID"]
     adm_grids = {
-        "IPUMS": IPUMS_adm_id_full,#.isel({"x": slice(12000,14000), "y": slice(10000,12000)}),
+        "IPUMS": IPUMS_adm_id_full,
         "WB": WB_adm_id_full,
     }
 
@@ -63,12 +63,12 @@ if __name__ == "__main__":
     )
 
     shocks = {
-        "floods": floods,
-        "drought": droughts,
-        "hurricanes": hurricanes,
-        "heatwaves": heatwaves,
-        "coldwaves": coldwaves,
-        "intenserain": intenserain,
+        "floods": {"ds": floods, "chunks": 8**2},
+        "drought": {"ds": droughts, "chunks": 4**2},
+        "hurricanes": {"ds": hurricanes, "chunks": 6**2},
+        "heatwaves": {"ds": heatwaves, "chunks": 4**2},
+        "coldwaves": {"ds": coldwaves, "chunks": 4**2},
+        "intenserain": {"ds": intenserain, "chunks": 4**2},
     }
 
     ### Run process
@@ -85,13 +85,12 @@ if __name__ == "__main__":
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
 
-        for shockname, shock in shocks.items():
+        for shockname, data in shocks.items():
 
             print(f"----- Processing {shockname}...")
-            if shockname=="droughts":
-                TOTAL_CHUNKS = 4**2
-            else:
-                TOTAL_CHUNKS = 6**2
+            
+            shock = data["ds"]
+            TOTAL_CHUNKS = data["chunks"]
             shock, needs_interp, needs_coarsen = utils.identify_needed_transformations(
                 shock, adm_id_full
             )
@@ -101,41 +100,55 @@ if __name__ == "__main__":
             #   and to allow parallel processing. This loop will iterate over every chunk
             for chunk_number in tqdm(range(TOTAL_CHUNKS)):
 
-                datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
-                    chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
-                )
-
-                # Load datasets in memory if there's enough space
-                chunk_adm_id = adm_id_full.sel(datafilter)
+                datafilter = None
+                chunk_shock = None
+                no_data_in_chunk = False
                 
-                if (chunk_adm_id != 99999).sum() == 0:
-                    # print("No data in this chunk, skipping...")
-                    continue
-
-                chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
-                                
-                ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
-                chunk_adm_id = chunk_adm_id.as_cupy()
-                gpw = utils.load_gpw_data(GPW_PATH , datafilter)
-
                 ## Loop over variables
                 for var in tqdm(shock.data_vars, leave=False):
-                    chunk_var = chunk_shock[var].load().as_cupy() # Load to VRAM
-    
+                    if no_data_in_chunk:
+                        break
+                    
                     ## Loop over years
                     # Note: data in this NC file will query faster if chunked in the same way as the data is stored
                     #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
                     #   send to cupy faster. That's why we loop over chunks first and then years.
+                    chunk_var = None    
                     gpw_year_prev = 0
                     for year in tqdm(shock.year.values, leave=False):
 
                         out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
-                        # if os.path.exists(out_path):
-                        #     continue
+                        if os.path.exists(out_path):
+                            continue
+
+                        if datafilter is None:
+                            ## Load ADM dataset
+                            datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
+                                chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
+                            )
+
+                            chunk_adm_id = adm_id_full.sel(datafilter)
+                            
+                            no_data_in_chunk = (chunk_adm_id != 99999).sum() == 0
+                            if no_data_in_chunk:
+                                # print("No data in this chunk, skipping...")
+                                break
+                            
+                            chunk_adm_id = chunk_adm_id.as_cupy().load() # Load to VRAM
+
+                            # Load GPW to VRAM
+                            gpw = utils.load_gpw_data(GPW_PATH , datafilter)
+                            
+                        if chunk_shock is None:
+                            ## Load datasets in memory if there's enough space
+                            chunk_shock = shock.sel(datafilter)
+                            # chunk_shock, is_loaded = utils.try_loading_ds(shock.sel(datafilter))
+
+                        ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
+                        if chunk_var is None:
+                            chunk_var = chunk_shock[var].as_cupy().load()
 
                         chunk_year_var = chunk_var.sel(year=year)
-                            
- 
 
                         if needs_interp:
                             chunk_year_var = utils.interpolate_era5_data(
@@ -159,16 +172,21 @@ if __name__ == "__main__":
                     mempool.free_all_blocks()
                     pinned_mempool.free_all_blocks()
 
+                datafilter = None
+                chunk_adm_id = None
                 chunk_shock = None
                 mempool.free_all_blocks()
                 pinned_mempool.free_all_blocks()
+                gc.collect()
 
-        chunk_adm_id = None
+            shock = None
+            mempool.free_all_blocks()
+            pinned_mempool.free_all_blocks()
+            gc.collect()
+            
         adm_id_full = None
-        shock = None
-        gc.collect()
-
         mempool.free_all_blocks()
         pinned_mempool.free_all_blocks()
+        gc.collect()
 
         

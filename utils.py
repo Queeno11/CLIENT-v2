@@ -289,7 +289,6 @@ def load_gpw_data(GPW_PATH, datafilter=None):
         # Convert the NumPy array to a CuPy array
         datayear = chunk_year_gpw.data
         gpw[year] = datayear
-        print()
 
     return gpw
 
@@ -471,7 +470,7 @@ def compress_dataframe(df):
 def process_all_dataframes(gdf, parquet_paths, shockname):
     import gc
 
-    pd.set_option("future.no_silent_downcasting", True)
+    # pd.set_option("future.no_silent_downcasting", True)
 
     gdf.columns = [col.lower() if col != "ID" else col for col in gdf.columns]
 
@@ -541,7 +540,7 @@ def process_to_stata(df, gdf, parquet_paths, shockname):
         columns=[
             "variable",
             "threshold",
-            "chunk",
+            # "chunk",
         ]
     )
     # Pivot data: every shock has to be a column
@@ -580,7 +579,7 @@ def coordinates_from_0_360_to_180_180(ds):
 def try_loading_ds(ds):
     memory_required = ds.nbytes
     available_memory = psutil.virtual_memory().available
-    if memory_required < available_memory:
+    if memory_required < available_memory / 2:
         # print("Loading shock in memory...")
         ds = ds.load()
         is_loaded = True

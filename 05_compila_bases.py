@@ -32,14 +32,14 @@ if __name__ == "__main__":
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
     gdfs = {
         "IPUMS": IPUMS_data,
-        "WB": WB_data,
+        # "WB": WB_data,
     }
 
     # Shock
     shocks = [
-        # "floods",
-        # "hurricanes",
-        # "drought",
+        "floods",
+        "hurricanes",
+        "drought",
         "heatwaves",
         "coldwaves",
         "intenserain",
@@ -70,7 +70,7 @@ if __name__ == "__main__":
             assert out_df.population_affected.max() <= 1, "Pop affected > 1"
             out_df.to_csv(outpath)
             print(f"Se creó {outpath}")
-
+            print(out_df)
             if admname != "IPUMS":
                 continue
 
