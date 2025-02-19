@@ -1,5 +1,12 @@
 import gc
 
+PATH = "D:\World Bank\CLIENT v2"
+DATA_RAW = rf"{PATH}\Data\Data_raw"
+DATA_PROC = rf"{PATH}\Data\Data_proc"
+DATA_OUT = rf"{PATH}\Data\Data_out"
+GFD_PATH = r"D:\Datasets\Global Flood Database\gfd_v1_4"
+GPW_PATH = r"D:\Datasets\Gridded Population of the World"
+
 def assert_correct_colnames(df, dataset_name="climate"):
     ''' Ensures dataframe has the correct column names for the webpage.
 
@@ -148,24 +155,47 @@ def validate_climate_dataset(df, gdf):
 
     return None
                     
-def validate_hc_merge(df, gdf):
-    ''' Ensures that the dataframe, after applying every filter, has a 1:1 merge with the gdf. 
+def validate_hc_merge():
+    """
+    Ensures that the Dask DataFrame (df), after applying every filter, 
+    has a 1:1 merge with the GeoDataFrame (gdf).
     
-        Raises a ValueError if the merge is not 1:1.
-        
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Dataframe to be checked.
-    gdf : gpd.GeoDataFrame
-        GeoDataFrame to be checked.
-        
+    Raises a ValueError if the merge is not 1:1.
+    
+    The grouping is now done using a new index, created by concatenating
+    the values from columns s1 to s5 and outcome.
+    
     Returns
     -------
     None
-    '''
-    from tqdm.autonotebook import tqdm
+    """
+    from tqdm.auto import tqdm
+    import pandas as pd
+    import dask.dataframe as dd
+    import gc
     import numpy as np
+    from dask.distributed import Client
+
+    client = Client()
+    print("Running client in:", client.scheduler.address)
+    
+    dtypes = {
+        "adm0":    np.int32,
+        "adm1":    np.int64,
+        "adm2":    np.int64,
+        "s1":      object,
+        "s2":      object,
+        "s3":      object,
+        "s4":      object,
+        "s5":      object,
+        "outcome": object,
+        "diftime": np.float32,
+        "status":  object,
+    }
+
+    # Read the Dask DataFrame and the GeoDataFrame
+    df = dd.read_csv(rf"{DATA_OUT}\for webpage\HC_geo_data.csv", dtype=dtypes, blocksize="100MB")
+    gdf = pd.read_csv(rf"{DATA_OUT}\for webpage\HC_geo_map.csv")
     
     id_cols = ["adm2", "adm1", "adm0"]
 
@@ -174,44 +204,199 @@ def validate_hc_merge(df, gdf):
     if gdf_duplicates > 0:
         raise ValueError(f"GeoDataFrame has duplicates. {gdf_duplicates} duplicates found.")
 
+    # Add temporary merge flag columns
     gdf["gdf_ismerged"] = True
-    df["df_ismerged"] = True
-
-    # gdf.set_index(id_cols, inplace=True)
-    # df.set_index(id_cols, inplace=True)
+    df = df.assign(df_ismerged=True)
     
-    # Grouping df by the unique combinations of year, threshold, measure, and variable
-    selectors = ["s1", "s2", "s3", "s4", "s5", "outcome"]
-    grouped = df.fillna(0).groupby(selectors)
-    if grouped.ngroups == 0:
+    # Create a new column 'group_index' by concatenating s1, s2, s3, s4, s5 and outcome.
+    # (If outcome should not be part of the group, remove it from the concatenation.)
+    df = df.assign(
+        group_index = (
+            df["s1"].astype(str) + "_" +
+            df["s2"].astype(str) + "_" +
+            df["s3"].astype(str) + "_" +
+            df["s4"].astype(str) + "_" +
+            df["s5"].astype(str) + "_" +
+            df["outcome"].astype(str)
+        )
+    )
+    
+    # Set the group_index as the index of the Dask DataFrame.
+    # Note: this operation shuffles the data.
+    df = df.set_index("group_index")
+    
+    # Get the unique group indices. This should be a relatively small list.
+    print("Computing unique groups...")
+    unique_groups = df.index.unique().compute()
+    if unique_groups.empty:
         raise ValueError("No groups found in the dataframe. Check the input data...")
-    
-    for selection, group in tqdm(grouped, desc="Validating merges..."):
+    else:
+        print(f"Unique groups: {len(unique_groups)}")
+        
+    # For each unique group, use index slicing (.loc) to retrieve the corresponding rows
+    for group_val in tqdm(unique_groups, total=len(unique_groups), desc="Validating merges..."):
+        # Slice the Dask DataFrame by the group index and compute it to a pandas DataFrame.
+        group = df.loc[group_val].compute()
 
-        # Reset index of the group
-        # df_filtered = group.reset_index(drop=True)
         try:
+            # Merge the GeoDataFrame with the current group.
+            # The 'validate="1:1"' option will check for one-to-one merges.
             merged = gdf.merge(group, on=id_cols, how="outer", validate="1:1", indicator=True)
         except Exception as e:
             print(e)
-            raise ValueError(f"Error in: {selection}, {group}")            
+            raise ValueError(f"Error in group: {group_val}, group data: {group}")
         
-        # merged.loc[merged["gdf_ismerge"] & merged["df_ismerge"], "_merge"] = "both"
-        # merged.loc[merged["gdf_ismerge"].isna() & merged["df_ismerge"], "_merge"] = "right_only"
-        # merged.loc[merged["gdf_ismerge"] & merged["df_ismerge"].isna(), "_merge"] = "left_only"
-        
+        # If there are rows that appear only in the right DataFrame (df), raise an error.
         if merged[merged["_merge"] == "right_only"].shape[0] > 0:
             raise ValueError(
-                f"Merge is not 1:1 for {selection}. The IDs do not match."
-            )                    
-            
-        # print("Number of polygons without data:", merged[merged["_merge"] == "left_only"].shape[0])
-    
+                f"Merge is not 1:1 for group index {group_val}. The IDs do not match."
+            )
+
+    # Clean up: remove the temporary merge flag columns.
     gdf.drop(columns=["gdf_ismerged"], inplace=True)
-    df.drop(columns=["df_ismerged"], inplace=True)
+    df = df.drop(columns=["df_ismerged"])
     gc.collect()
+    client.close()
+    
     return None
 
+def get_first_year_with_data(da):
+    ''' Returns the first year with data (with some variability) in a DataArray.
+    
+    Parameters
+    ----------
+    da : xarray.DataArray
+        DataArray to be checked.
+        
+    Returns
+    -------
+    int
+        First year with data.
+    '''
+
+    first_year_with_data = None
+    first_year = da["year"].min().values
+    last_year = da["year"].max().values
+    assert first_year < last_year, "First year is greater than last year."
+    for year in range(first_year, last_year):
+        if da.sel(year=year).max().item() is True: # If the maximum is True
+            first_year_with_data = year
+            break
+        
+    if first_year_with_data is None:
+        raise ValueError("No year with data found.")
+            
+    return first_year_with_data
+
+def get_first_chunk_with_data(da, total_chunks, canvas):
+    ''' Returns the first chunk with data (with some variability) in a DataArray.
+    
+    Parameters
+    ----------
+    da : xarray.DataArray
+        DataArray to be checked.
+    total_chunks : int
+        Total number of chunks.
+        
+    Returns
+    -------
+    int
+        First chunk with data.
+    '''
+    
+    import utils 
+    from math import sqrt
+    
+    first_chunk_with_data = None
+    min_chunk = int(sqrt(total_chunks))
+    last_chunk = total_chunks + 1
+
+    for chunk_number in range(min_chunk, last_chunk):
+        datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
+            chunk_number, total_chunks=total_chunks, canvas=canvas
+        )
+        if da.sel(datafilter).max().item() is True: # If the maximum is True
+            first_chunk_with_data = chunk_number
+            break
+
+    if first_chunk_with_data is None:
+        raise ValueError("No chunk with data found.")
+
+    return first_chunk_with_data
+
+def get_file_by_shockname(shockname):
+    ''' Get the filename for a given shockname.'''
+    import os
+    
+    files = os.listdir(DATA_OUT)
+    files = [f for f in files if ".nc" in f] # Filter only netcdf files
+    files = [f for f in files if shockname in f] # Filter by shockname
+    
+    if len(files) == 0:
+        raise ValueError(f"No files found for shockname {shockname}.")
+    elif len(files) > 1:
+        raise ValueError(f"Multiple files found for shockname {shockname}.")
+    
+    return files[0]
+    
+def compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname="coldwaves", var=None, total_chunks=16, year=None, out_name="compare_xarray_with_zonal_statistics"):
+    
+    assert adm in ["WB", "IPUMS"], "adm must be either 'WB' or 'IPUMS'"
+    
+    import utils
+    import xarray as xr
+    import pandas as pd
+    import geopandas as gpd
+    import matplotlib.pyplot as plt
+    from tqdm import tqdm
+
+    filename = get_file_by_shockname(shockname)
+    adm_data = gpd.read_feather(rf"{DATA_PROC}/{adm}_country_IDs.feather")
+    shock = xr.open_dataset(rf"{DATA_OUT}/{filename}")
+
+    if var is None:
+        var = list(shock.keys())[0]
+    
+    if year is None:
+        year = get_first_year_with_data(shock[var])
+    
+    da = shock[var].sel(year=year)
+        
+    if chunk_number is None:
+        chunk_number = get_first_chunk_with_data(da, total_chunks, canvas=adm_data.total_bounds)
+        
+    print(f"Var: {var}, Year: {year}, Chunk: {chunk_number}")
+    # Load zonal_statistics output
+    df = pd.read_parquet(rf"D:\World Bank\CLIENT v2\Data\Data_proc\shocks_by_adm\{adm}\{adm}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet")
+    merged = adm_data.set_index("ID").join(df, how="inner")
+
+    # Load shock raster data (xarray)
+    datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
+        chunk_number, total_chunks=total_chunks, canvas=adm_data.total_bounds
+    )
+    da = da.sel(datafilter)
+
+    # Plot
+
+    merged["area_affected"] = (merged["cells_affected"] / merged["total_cells"]).fillna(0)
+    merged["population_affected"] = (merged["population_affected_n"] / merged["total_population"]).fillna(0)
+    ax = merged.plot(column="area_affected", figsize=(60, 20))
+
+    da.plot(ax=ax, alpha=0.5)
+
+    # Add the area_affected value at the centroid of each polygon
+    for idx, row in tqdm(merged.iterrows(), total=len(merged)):
+        if row.geometry is not None and row.geometry.is_valid:
+            centroid = row.geometry.centroid
+            value = int(row['area_affected'] * 100)
+            ax.text(
+                centroid.x, centroid.y, f"{value}",
+                horizontalalignment='center',
+                fontsize=4,
+                color='black'
+            )
+
+    plt.savefig(rf"{DATA_OUT}/{out_name}.png", dpi=300)
 
 if __name__ == "__main__":
     import pandas as pd
@@ -227,7 +412,20 @@ if __name__ == "__main__":
         
         assert_correct_colnames(df)
         assert_correct_shape(df, gdf)
-        # validate_climate_dataset(df, gdf)
+        validate_climate_dataset(df, gdf)
+        
+        if shock=="floods":
+            total_chunks=8**2
+        elif shock=="hurricanes":
+            total_chunks=6**2
+        else: 
+            total_chunks=4**2
+            
+        compare_xarray_with_zonal_statistics(adm="WB", chunk_number=5, shock="coldwaves", var="fd20", total_chunks=total_chunks, year=2004, out_name="compare_xarray_with_zonal_statistics")
         
     print("Testing HC DATASET:")
-    print("Dataset is validated during generation due to memory constraints.")
+    
+    for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
+        compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=5, shock="coldwaves", var="fd20", total_chunks=total_chunks, year=2004, out_name="compare_xarray_with_zonal_statistics")
+
+    print("Rest of the dataset is validated during generation due to memory constraints.")

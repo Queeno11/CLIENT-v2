@@ -30,7 +30,7 @@ if __name__ == "__main__":
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
     gdfs = {
-        "IPUMS": IPUMS_data,
+        # "IPUMS": IPUMS_data,
         "WB": WB_data,
     }
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc", chunks="auto")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc", chunks="auto")["ID"]
     adm_grids = {
-        "IPUMS": IPUMS_adm_id_full,
+        # "IPUMS": IPUMS_adm_id_full,
         "WB": WB_adm_id_full,
     }
 
@@ -98,14 +98,14 @@ if __name__ == "__main__":
             print(f"Exporting {shockname}...")
 
             # Compile all the dataframes and generate country dtas
-            outpath_long = os.path.join(DATA_OUT, f"{admname}_{shockname}_long.csv")
+            outpath_long = os.path.join(f"{PATH}/Data/Data_out", f"{admname}_{shockname}_long.csv")
             out_df = utils.process_all_dataframes(gdfs[admname], chunks_path, shockname)
             out_df.to_csv(outpath_long)
             print(f"Se creó {outpath_long}")
             
             if admname == "IPUMS":
                 ### STATA VERSION (WIDE) (only for IPUMS)
-                outpath_wide = os.path.join(DATA_OUT, f"{admname}_{shockname}_wide.dta")
+                outpath_wide = os.path.join(f"{PATH}/Data/Data_out", f"{admname}_{shockname}_wide.dta")
                 out_df = utils.process_to_stata(out_df, gdfs[admname])
                 out_df.to_stata(outpath_wide, write_index=False)
                 print(f"Se creó {outpath_wide}")

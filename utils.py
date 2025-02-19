@@ -4,10 +4,10 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 import psutil
-
 try:
     import cupy as cp
     from cupyx.scipy.interpolate import RegularGridInterpolator
+    import cupy_xarray  # Adds .cupy to Xarray objects
 except Exception as e:
     print("Cupy was not imported. Please install it to use the functions in this script.")
     print(e)
@@ -15,10 +15,10 @@ except Exception as e:
 import numpy as np
 import pandas as pd
 import xarray as xr
-import cupy_xarray  # Adds .cupy to Xarray objects
 from tqdm import tqdm
 from decorator import decorator
 from line_profiler import LineProfiler
+import test_tools
 
 
 @decorator
@@ -705,3 +705,46 @@ def process_shock(data, adm_id_full, chunks_path, admname, shockname, WB_data, G
         mempool.free_all_blocks()
         pinned_mempool.free_all_blocks()
         gc.collect()
+        
+def expand_dataset(df, gdf):
+                    
+    # Collect all dimension values from df
+    all_years      = df.index.get_level_values("year").categories
+    all_variables  = df.index.get_level_values("variable").categories
+    all_thresholds = df.index.get_level_values("threshold").categories
+    all_measures   = df.index.get_level_values("measure").categories
+    all_regions    = gdf.index.categories # ID is the index of gdf
+
+    # Convert each list to a small DataFrame
+    df_years      = pd.DataFrame({'year': all_years}, dtype='category')
+    df_variables  = pd.DataFrame({'variable': all_variables}, dtype='category')
+    df_thresholds = pd.DataFrame({'threshold': all_thresholds}, dtype='category')
+    df_measures   = pd.DataFrame({'measure': all_measures}, dtype='category')
+    df_regions    = pd.DataFrame({'ID': all_regions}, dtype='category')
+
+    # Step-by-step merges using how='cross'
+    df_temp = df_years.merge(df_variables, how='cross')
+    df_temp = df_temp.merge(df_regions, how='cross')
+    df_temp = df_temp.merge(df_thresholds, how='cross')
+    df_temp = df_temp.merge(df_measures, how='cross')
+    expanded_without_data = df_temp.set_index(["ID", "year", "variable", "threshold", "measure"])
+    
+    # add admcodes to the expanded set
+    expanded_without_data = expanded_without_data.join(
+        gdf.drop(columns=["geometry"]),
+        how="left",
+        on="ID",
+        validate="m:1"
+    )
+    
+    # Merge original data (df) onto the expanded set
+    expanded_with_data = expanded_without_data.join(
+        df,
+        how="left",
+        validate="1:1",
+        rsuffix="_y"
+    ).reset_index().drop(columns="ID")
+    
+    expanded_with_data = test_tools.assert_correct_admcodes(expanded_with_data)        
+
+    return expanded_with_data
