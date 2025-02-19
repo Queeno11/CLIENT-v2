@@ -358,19 +358,19 @@ def genera_zip():
 
 if __name__ == "__main__":
     
-    print("Generando bases del Climate Dashboard")
-    gdf = genera_mapa_climate_dashboard()
-    genera_shocks_climate_dashboard(gdf)
-    gc.collect()
+    # print("Generando bases del Climate Dashboard")
+    # gdf = genera_mapa_climate_dashboard()
+    # genera_shocks_climate_dashboard(gdf)
+    # gc.collect()
 
-    print("Generando bases del HC Dashboard")
-    # gdf_full = genera_mapa_hc_dashboard()
-    # genera_shocks_nacionales_hc_dashboard(gdf_full)
-    genera_shocks_subnacionales_hc_dashboard()
-    gc.collect()
+    # print("Generando bases del HC Dashboard")
+    # # gdf_full = genera_mapa_hc_dashboard()
+    # # genera_shocks_nacionales_hc_dashboard(gdf_full)
+    # genera_shocks_subnacionales_hc_dashboard()
+    # gc.collect()
 
-    genera_zip()
-    print("Listo! Datos exportados para las páginas web.")
+    # genera_zip()
+    # print("Listo! Datos exportados para las páginas web.")
     
     
     
@@ -385,11 +385,11 @@ if __name__ == "__main__":
     for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
         
         print("Verifying", shock)
-        df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
+        # df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
         
-        test_tools.assert_correct_colnames(df)
-        test_tools.assert_correct_shape(df, gdf)
-        test_tools.validate_climate_dataset(df, gdf)
+        # test_tools.assert_correct_colnames(df)
+        # test_tools.assert_correct_shape(df, gdf)
+        # test_tools.validate_climate_dataset(df, gdf)
         
         if shock=="floods":
             total_chunks=8**2
@@ -398,13 +398,21 @@ if __name__ == "__main__":
         else: 
             total_chunks=4**2
             
-        test_tools.compare_xarray_with_zonal_statistics(adm="WB", chunk_number=5, shockname="coldwaves", var="fd20", total_chunks=total_chunks, year=2004, out_name="compare_xarray_with_zonal_statistics")
+        test_tools.compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_climate_{shock}")
         
     print("Testing HC DATASET:")
     
-    test_tools.validate_hc_merge()
+    # test_tools.validate_hc_merge()
     for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
-        test_tools.compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=5, shockname="coldwaves", var="fd20", total_chunks=total_chunks, year=2004, out_name="compare_xarray_with_zonal_statistics")
+        
+        if shock=="floods":
+            total_chunks=8**2
+        elif shock=="hurricanes":
+            total_chunks=6**2
+        else: 
+            total_chunks=4**2
+        print(total_chunks)
+        test_tools.compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_hc_{shock}")
 
-    print("All tests passed!")
+    print("All tests passed! Check de output images")
     

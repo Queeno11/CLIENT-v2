@@ -171,30 +171,25 @@ def validate_hc_merge():
     """
     from tqdm.auto import tqdm
     import pandas as pd
-    import dask.dataframe as dd
-    import gc
-    import numpy as np
-    from dask.distributed import Client
-
-    client = Client()
-    print("Running client in:", client.scheduler.address)
+    import polars as pl
+    import time
     
     dtypes = {
-        "adm0":    np.int32,
-        "adm1":    np.int64,
-        "adm2":    np.int64,
-        "s1":      object,
-        "s2":      object,
-        "s3":      object,
-        "s4":      object,
-        "s5":      object,
-        "outcome": object,
-        "diftime": np.float32,
-        "status":  object,
+        "adm0":         pl.Int32,
+        "adm1":         pl.Int64,
+        "adm2":         pl.Int64,
+        "s1":           pl.String,
+        "s2":           pl.String,
+        "s3":           pl.String,
+        "s4":           pl.String,
+        "s5":           pl.String,
+        "outcome":      pl.String,
+        "diff":         pl.Float32,
+        "treatment_sub":pl.String,
     }
 
-    # Read the Dask DataFrame and the GeoDataFrame
-    df = dd.read_csv(rf"{DATA_OUT}\for webpage\HC_geo_data.csv", dtype=dtypes, blocksize="100MB")
+    # Read the CSV as polars lazy, and the GeoDataFrame to memory
+    df_lazy = pl.scan_csv(rf"{DATA_OUT}\for webpage\HC_geo_data.csv", schema_overrides=dtypes)
     gdf = pd.read_csv(rf"{DATA_OUT}\for webpage\HC_geo_map.csv")
     
     id_cols = ["adm2", "adm1", "adm0"]
@@ -203,60 +198,56 @@ def validate_hc_merge():
     gdf_duplicates = gdf.duplicated(subset=id_cols).sum()
     if gdf_duplicates > 0:
         raise ValueError(f"GeoDataFrame has duplicates. {gdf_duplicates} duplicates found.")
-
-    # Add temporary merge flag columns
-    gdf["gdf_ismerged"] = True
-    df = df.assign(df_ismerged=True)
-    
-    # Create a new column 'group_index' by concatenating s1, s2, s3, s4, s5 and outcome.
-    # (If outcome should not be part of the group, remove it from the concatenation.)
-    df = df.assign(
-        group_index = (
-            df["s1"].astype(str) + "_" +
-            df["s2"].astype(str) + "_" +
-            df["s3"].astype(str) + "_" +
-            df["s4"].astype(str) + "_" +
-            df["s5"].astype(str) + "_" +
-            df["outcome"].astype(str)
-        )
-    )
-    
-    # Set the group_index as the index of the Dask DataFrame.
-    # Note: this operation shuffles the data.
-    df = df.set_index("group_index")
-    
+      
     # Get the unique group indices. This should be a relatively small list.
     print("Computing unique groups...")
-    unique_groups = df.index.unique().compute()
-    if unique_groups.empty:
+    shocks_col = ["s1"]
+    t1 = time.time()
+    shocks = df_lazy.select(shocks_col).unique(subset=shocks_col).collect(streaming=True).to_pandas()
+    print(f"Unique groups computed in {time.time()-t1:.2f} seconds.")
+    
+    if shocks.empty:
         raise ValueError("No groups found in the dataframe. Check the input data...")
     else:
-        print(f"Unique groups: {len(unique_groups)}")
+        print(f"Shocks: {len(shocks)}")
         
     # For each unique group, use index slicing (.loc) to retrieve the corresponding rows
-    for group_val in tqdm(unique_groups, total=len(unique_groups), desc="Validating merges..."):
-        # Slice the Dask DataFrame by the group index and compute it to a pandas DataFrame.
-        group = df.loc[group_val].compute()
+    for shock in shocks.s1.to_list():
+        for s2 in ["Area", "Population"]:
+            print(shock)        
+            group_ids = ["s3", "s4", "s5", "outcome"]
 
-        try:
-            # Merge the GeoDataFrame with the current group.
-            # The 'validate="1:1"' option will check for one-to-one merges.
-            merged = gdf.merge(group, on=id_cols, how="outer", validate="1:1", indicator=True)
-        except Exception as e:
-            print(e)
-            raise ValueError(f"Error in group: {group_val}, group data: {group}")
-        
-        # If there are rows that appear only in the right DataFrame (df), raise an error.
-        if merged[merged["_merge"] == "right_only"].shape[0] > 0:
-            raise ValueError(
-                f"Merge is not 1:1 for group index {group_val}. The IDs do not match."
-            )
+            df_shock = df_lazy\
+                .filter((pl.col("s1") == shock) & (pl.col("s2") == s2))\
+                .select(id_cols + group_ids)\
+                .collect(streaming=True)\
+                .to_pandas()
+            
+                    
+            grouped = df_shock.fillna(0).groupby(group_ids)
+            if grouped.ngroups == 0:
+                raise ValueError("No groups found in the dataframe. Check the input data...")
+            
+            for selection, group in tqdm(grouped, desc="Validating merges..."):
 
-    # Clean up: remove the temporary merge flag columns.
-    gdf.drop(columns=["gdf_ismerged"], inplace=True)
-    df = df.drop(columns=["df_ismerged"])
+                # Reset index of the group
+                # df_filtered = group.reset_index(drop=True)
+                try:
+                    merged = gdf.merge(group, on=id_cols, how="outer", validate="1:1", indicator=True)
+                except Exception as e:
+                    print(e)
+                    raise ValueError(f"Error in: {selection}, {group}")            
+                        
+                if merged[merged["_merge"] == "right_only"].shape[0] > 0:
+                    raise ValueError(
+                        f"Merge is not 1:1 for {selection}. The IDs do not match."
+                    )                    
+                    
+            df_shock = None
+            merged = None
+            gc.collect()
+
     gc.collect()
-    client.close()
     
     return None
 
@@ -351,7 +342,14 @@ def compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=
     from tqdm import tqdm
 
     filename = get_file_by_shockname(shockname)
-    adm_data = gpd.read_feather(rf"{DATA_PROC}/{adm}_country_IDs.feather")
+    WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
+    if adm=="WB":
+        adm_data = WB_data
+    elif adm=="IPUMS":  
+        adm_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
+    else:
+        raise ValueError("adm has to be either 'WB' or 'IPUMS'")
+    
     shock = xr.open_dataset(rf"{DATA_OUT}/{filename}")
 
     if var is None:
@@ -363,7 +361,7 @@ def compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=
     da = shock[var].sel(year=year)
         
     if chunk_number is None:
-        chunk_number = get_first_chunk_with_data(da, total_chunks, canvas=adm_data.total_bounds)
+        chunk_number = get_first_chunk_with_data(da, total_chunks, canvas=WB_data.total_bounds)
         
     print(f"Var: {var}, Year: {year}, Chunk: {chunk_number}")
     # Load zonal_statistics output
