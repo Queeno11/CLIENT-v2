@@ -251,6 +251,33 @@ def validate_hc_merge():
     
     return None
 
+def get_first_var_year_with_data(ds):
+    ''' Returns the first year and variable with data (with some variability) in a DataSet.
+    
+    Parameters
+    ----------
+    ds : xarray.DataSet
+        DataSet to be checked.
+        
+    Returns
+    -------
+    int
+        First year with data.
+    '''
+
+    first_var_with_data = None
+    
+    for var in list(ds.data_vars):
+
+        da = ds[var]
+        first_year_with_data = get_first_year_with_data(da) 
+        if first_year_with_data is not None:
+            first_var_with_data = var
+            break       
+            
+    return first_var_with_data, first_year_with_data
+
+
 def get_first_year_with_data(da):
     ''' Returns the first year with data (with some variability) in a DataArray.
     
@@ -266,11 +293,14 @@ def get_first_year_with_data(da):
     '''
 
     first_year_with_data = None
+    
     first_year = da["year"].min().values
     last_year = da["year"].max().values
     assert first_year < last_year, "First year is greater than last year."
     for year in range(first_year, last_year):
-        if da.sel(year=year).max().item() is True: # If the maximum is True
+        has_data = da.sel(year=year).max().item()
+
+        if bool(has_data) is True: # If the maximum is True
             first_year_with_data = year
             break
         
@@ -300,13 +330,14 @@ def get_first_chunk_with_data(da, total_chunks, canvas):
     
     first_chunk_with_data = None
     min_chunk = int(sqrt(total_chunks))
-    last_chunk = total_chunks + 1
+    last_chunk = total_chunks
 
     for chunk_number in range(min_chunk, last_chunk):
+
         datafilter, chunk_bounds = utils.get_filter_from_chunk_number(
             chunk_number, total_chunks=total_chunks, canvas=canvas
         )
-        if da.sel(datafilter).max().item() is True: # If the maximum is True
+        if bool(da.sel(datafilter).max().item()) is True: # If the maximum is True
             first_chunk_with_data = chunk_number
             break
 
@@ -351,13 +382,18 @@ def compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=
         raise ValueError("adm has to be either 'WB' or 'IPUMS'")
     
     shock = xr.open_dataset(rf"{DATA_OUT}/{filename}")
-
-    if var is None:
-        var = list(shock.keys())[0]
+    if shockname=="floods":
+        # FIXME: this should be done earlier...
+        shock = shock.rename(
+            {"band_data": "flooded"}
+        )
     
     if year is None:
-        year = get_first_year_with_data(shock[var])
-    
+        if var is None:
+            var, year = get_first_var_year_with_data(shock)
+        else:
+            year = get_first_year_with_data(shock[var])
+        
     da = shock[var].sel(year=year)
         
     if chunk_number is None:

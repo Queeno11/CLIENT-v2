@@ -390,7 +390,6 @@ if __name__ == "__main__":
         # test_tools.assert_correct_colnames(df)
         # test_tools.assert_correct_shape(df, gdf)
         # test_tools.validate_climate_dataset(df, gdf)
-        
         if shock=="floods":
             total_chunks=8**2
         elif shock=="hurricanes":
