@@ -1,24 +1,24 @@
-import re
 import os
+import gc
 import time
 import pyarrow as pa
 import pyarrow.parquet as pq
-import glob
 import psutil
-
 try:
     import cupy as cp
     from cupyx.scipy.interpolate import RegularGridInterpolator
-except:
+    import cupy_xarray  # Adds .cupy to Xarray objects
+except Exception as e:
+    print("Cupy was not imported. Please install it to use the functions in this script.")
+    print(e)
     pass
 import numpy as np
-import xarray as xr
 import pandas as pd
-import rasterio
+import xarray as xr
 from tqdm import tqdm
-from rasterio.windows import Window
 from decorator import decorator
 from line_profiler import LineProfiler
+import test_tools
 
 
 @decorator
@@ -47,9 +47,9 @@ def compute_zonal_statistics(datavar, adm_id, year_gpw):
     --------
     pandas.DataFrame: Zonal statistics aggregated by administrative unit.
     """
-    groups = cp.asarray(adm_id.values.flatten())
-    population_values = cp.asarray(year_gpw.flatten(), dtype=np.float32)
-    area_values = cp.asarray(datavar.flatten())
+    groups = adm_id.flatten()
+    population_values = year_gpw.flatten()
+    area_values = datavar.flatten()
 
     assert (
         groups.shape == area_values.shape == population_values.shape
@@ -121,12 +121,12 @@ def get_interpolate_xy(era5_da, adm_id_da):
     # New grid based on adm_id_da
     new_lat = cp.asarray(adm_id_da.y)
     new_lon = cp.asarray(adm_id_da.x)
-    era5_new_grid = np.meshgrid(new_lat, new_lon, indexing="ij")
+    era5_new_grid = cp.meshgrid(new_lat, new_lon, indexing="ij")
 
     return era5_original_grid, era5_new_grid
 
 
-def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
+def interpolate_era5_data(era5_da, adm_id_da, verbose=False):
     """Interpolate ERA5 data to the adm_id_da grid using cupy and cupyx
 
     Parameters:
@@ -146,19 +146,20 @@ def intepolate_era5_data(era5_da, adm_id_da, verbose=False):
     if verbose:
         print("Interpolating...")
         t0 = time.time()
+        
     ## Interpolate droughts like adm_id_da
     # Define the grid
     lat = cp.asarray(era5_da.y.values, dtype="float32")
     lon = cp.asarray(era5_da.x.values, dtype="float32")
-    spi = cp.asarray(era5_da.values, dtype="bool")
+    spi = era5_da.data
     interpolate = RegularGridInterpolator(
-        (lat, lon), spi, method="nearest", bounds_error=False
+        (lat, lon), spi, method="nearest", bounds_error=False, fill_value=0
     )
 
     # Interpolate
     new_lat = cp.asarray(adm_id_da.y)
     new_lon = cp.asarray(adm_id_da.x)
-    new_lat, new_lon = np.meshgrid(new_lat, new_lon, indexing="ij")
+    new_lat, new_lon = cp.meshgrid(new_lat, new_lon, indexing="ij")
     era5_interp = interpolate((new_lat, new_lon))
 
     if verbose:
@@ -266,40 +267,29 @@ def find_gpw_closes_year(year):
     return min(years, key=lambda x: abs(x - year))
 
 
-def load_gpw_data(year, bounds=None):
-    """Load the GPW data for given year as a CuPy array.
+def load_gpw_data(GPW_PATH, datafilter=None):
+    """Load the GPW data for all the years as cupy arrays.
 
     If bounds are provided, the data is clipped to the bounding box.
 
     Parameters:
     -----------
-    year: int
-        Year of the GPW data to load.
     bounds: tuple
         Bounding box coordinates (left, bottom, right, top) to load the data.
-    """
-    if year not in [2000, 2005, 2010, 2015, 2020]:
-        raise ValueError("Year must be one of 2000, 2005, 2010, 2015 or 2020.")
 
-    with rasterio.open(
-        rf"/mnt/d/datasets/Gridded Population of the World/gpw_v4_population_count_rev11_{year}_30_sec.tif",
-    ) as src:
-        window = None
-        if bounds is not None:
-            # Read the data into a NumPy array
-            window = rasterio.windows.from_bounds(
-                left=bounds[0],
-                bottom=bounds[1],
-                right=bounds[2],
-                top=bounds[3],
-                transform=src.transform,
-            )
-        data = src.read(1, window=window)  # Assuming single band, read the first band
-        # Verify we've loaded data
-        assert data is not None, "No data loaded from the GPW raster."
+    Returns:
+    --------
+    dict: Dictionary with the GPW data for each year as cupy arrays. Keys are the years (2000, 2005, 2010, 2015 and 2020). 
+    """
+    gpw = {}
+    for year in [2000, 2005, 2010, 2015, 2020]:
+
+        chunk_year_gpw = xr.open_dataarray(rf"{GPW_PATH}/gpw_v4_population_count_rev11_{year}_30_sec.tif")
+        chunk_year_gpw = chunk_year_gpw.sel(band=1).sel(datafilter).as_cupy()
 
         # Convert the NumPy array to a CuPy array
-        gpw = cp.asarray(data)
+        datayear = chunk_year_gpw.data
+        gpw[year] = datayear
 
     return gpw
 
@@ -481,7 +471,7 @@ def compress_dataframe(df):
 def process_all_dataframes(gdf, parquet_paths, shockname):
     import gc
 
-    pd.set_option("future.no_silent_downcasting", True)
+    # pd.set_option("future.no_silent_downcasting", True)
 
     gdf.columns = [col.lower() if col != "ID" else col for col in gdf.columns]
 
@@ -542,16 +532,19 @@ def process_all_dataframes(gdf, parquet_paths, shockname):
         .fillna(0)
         .replace([np.inf, -np.inf], 0)
     )
+    assert df.area_affected.max() <= 1, "Area affected > 1"
+    assert df.population_affected.max() <= 1, "Pop affected > 1"
+    
     return df
 
 
-def process_to_stata(df, gdf, parquet_paths, shockname):
+def process_to_stata(df, gdf):
     df["name"] = df["variable"].str.lower() + "_" + df["threshold"].astype(str)
     df = df.drop(
         columns=[
             "variable",
             "threshold",
-            "chunk",
+            # "chunk",
         ]
     )
     # Pivot data: every shock has to be a column
@@ -568,15 +561,20 @@ def process_to_stata(df, gdf, parquet_paths, shockname):
     pivot.columns = newcols
     pivot = pivot.reset_index()
 
-    path = os.path.join(parquet_paths, f"{shockname}_wide.csv")
-    pivot.to_csv(path)
-    print(f"Se creó {path}")
-
-    pivot = pd.read_csv(path)
-
     # Add the data to the gdf
     out_df = gdf.merge(pivot, on="ID", validate="1:m", how="outer")
     out_df.columns = out_df.columns.str.lower()
+
+    assert (
+        out_df.duplicated(
+            subset=["cntry_code", "geolevel1", "geolevel2", "year"]
+        ).sum()
+        == 0
+    ), "Duplicated rows"
+    
+    # Export minimal version
+    print(out_df.columns)
+    out_df = out_df.drop(columns=["geometry"])
 
     return out_df
 
@@ -590,10 +588,163 @@ def coordinates_from_0_360_to_180_180(ds):
 def try_loading_ds(ds):
     memory_required = ds.nbytes
     available_memory = psutil.virtual_memory().available
-    if memory_required < available_memory:
+    if memory_required < available_memory / 2:
         # print("Loading shock in memory...")
         ds = ds.load()
         is_loaded = True
     else:
         is_loaded = False
     return ds, is_loaded
+
+def process_shock(data, adm_id_full, chunks_path, admname, shockname, WB_data, GPW_PATH, recompute=False):
+    """
+    Process a shock dataset in chunks, looping over variables and years,
+    computing zonal statistics and saving the output to parquet files.
+    
+    Parameters:
+        shock (xarray.Dataset): The shock dataset.
+        TOTAL_CHUNKS (int): Total number of chunks to process.
+        adm_id_full (xarray.DataArray): Administrative boundaries with IDs.
+        chunks_path (str): Directory path where output parquet files will be saved.
+        admname (str): Name of the administrative grid (e.g., "IPUMS").
+        shockname (str): Name of the shock (e.g., "floods", "drought").
+        WB_data (GeoDataFrame): World Bank country boundaries and IDs (used to get canvas bounds).
+        GPW_PATH (str): Path to the Gridded Population of the World dataset.
+        needs_interp (bool): Flag indicating if interpolation is needed (from utils.identify_needed_transformations).
+    
+    Returns:
+        None
+    """
+    
+    print(f"----- Processing {shockname}...")
+    mempool = cp.get_default_memory_pool()
+    pinned_mempool = cp.get_default_pinned_memory_pool()
+
+    shock = data["ds"]
+    TOTAL_CHUNKS = data["chunks"]
+    shock, needs_interp, needs_coarsen = identify_needed_transformations(
+        shock, adm_id_full
+    )
+
+    for chunk_number in tqdm(range(TOTAL_CHUNKS)):
+
+        datafilter = None
+        chunk_shock = None
+        no_data_in_chunk = False
+        
+        ## Loop over variables
+        for var in tqdm(shock.data_vars, leave=False):
+            if no_data_in_chunk:
+                break
+            
+            ## Loop over years
+            # Note: data in this NC file will query faster if chunked in the same way as the data is stored
+            #   so loading the chunks based on lat-lon will be fast. Once in memory, we can slice by year and
+            #   send to cupy faster. That's why we loop over chunks first and then years.
+            chunk_var = None    
+            for year in tqdm(shock.year.values, leave=False):
+
+                out_path = rf"{chunks_path}/{admname}_{shockname}_{var}_{year}_{chunk_number}_zonal_stats.parquet"
+                if os.path.exists(out_path) & (not recompute):
+                    continue
+
+                if datafilter is None:
+                    ## Load ADM dataset
+                    datafilter, chunk_bounds = get_filter_from_chunk_number(
+                        chunk_number, total_chunks=TOTAL_CHUNKS, canvas=WB_data.total_bounds
+                    )
+
+                    chunk_adm_id = adm_id_full.sel(datafilter)
+                    
+                    no_data_in_chunk = (chunk_adm_id != 99999).sum() == 0
+                    if no_data_in_chunk:
+                        # print("No data in this chunk, skipping...")
+                        break
+                    
+                    chunk_adm_id = chunk_adm_id.as_cupy().load() # Load to VRAM
+
+                    # Load GPW to VRAM
+                    gpw = load_gpw_data(GPW_PATH , datafilter)
+                    
+                if chunk_shock is None:
+                    ## Load datasets in memory if there's enough space
+                    chunk_shock = shock.sel(datafilter)
+                    # chunk_shock, is_loaded = try_loading_ds(shock.sel(datafilter))
+
+                ## Load stuff to GPU (both elements ar cupy arrays - gwp is a dict of cupy arrays)
+                if chunk_var is None:
+                    chunk_var = chunk_shock[var].as_cupy().load()
+
+                chunk_year_var = chunk_var.sel(year=year)
+
+                if needs_interp:
+                    chunk_year_var = interpolate_era5_data(
+                        chunk_year_var,
+                        chunk_adm_id,
+                        verbose=False,
+                    )
+                else:
+                    chunk_year_var = chunk_year_var.data
+
+                ### Groupby
+                df = compute_zonal_statistics(
+                    chunk_year_var, chunk_adm_id.data, gpw[find_gpw_closes_year(year)]
+                )
+                df.to_parquet(out_path)
+                
+                chunk_year_var = None
+                df = None
+
+            chunk_var = None    
+            mempool.free_all_blocks()
+            pinned_mempool.free_all_blocks()
+
+        datafilter = None
+        chunk_adm_id = None
+        chunk_shock = None
+        mempool.free_all_blocks()
+        pinned_mempool.free_all_blocks()
+        gc.collect()
+        
+def expand_dataset(df, gdf):
+                    
+    # Collect all dimension values from df
+    all_years      = df.index.get_level_values("year").categories
+    all_variables  = df.index.get_level_values("variable").categories
+    all_thresholds = df.index.get_level_values("threshold").categories
+    all_measures   = df.index.get_level_values("measure").categories
+    all_regions    = gdf.index.categories # ID is the index of gdf
+
+    # Convert each list to a small DataFrame
+    df_years      = pd.DataFrame({'year': all_years}, dtype='category')
+    df_variables  = pd.DataFrame({'variable': all_variables}, dtype='category')
+    df_thresholds = pd.DataFrame({'threshold': all_thresholds}, dtype='category')
+    df_measures   = pd.DataFrame({'measure': all_measures}, dtype='category')
+    df_regions    = pd.DataFrame({'ID': all_regions}, dtype='category')
+
+    # Step-by-step merges using how='cross'
+    df_temp = df_years.merge(df_variables, how='cross')
+    df_temp = df_temp.merge(df_regions, how='cross')
+    df_temp = df_temp.merge(df_thresholds, how='cross')
+    df_temp = df_temp.merge(df_measures, how='cross')
+    expanded_without_data = df_temp.set_index(["ID", "year", "variable", "threshold", "measure"])
+    
+    # add admcodes to the expanded set
+    expanded_without_data = expanded_without_data.join(
+        gdf.drop(columns=["geometry"]),
+        how="left",
+        on="ID",
+        validate="m:1"
+    )
+    
+    # Merge original data (df) onto the expanded set
+    expanded_with_data = expanded_without_data.join(
+        df,
+        how="left",
+        validate="1:1",
+        rsuffix="_y"
+    ).reset_index().drop(columns="ID")
+    
+    expanded_with_data = test_tools.assert_correct_admcodes(expanded_with_data)        
+
+    return expanded_with_data
