@@ -48,8 +48,8 @@ def genera_mapa_climate_dashboard():
     gdf = gdf.drop(columns="_merge")
 
     # Exporta
-    outname = rf"{DATA_OUT}\\for webpage\\WB_map.csv"
-    gdf.drop(columns="ID").to_csv(outname, index=False) # Export without the ID column
+    outname = rf"{DATA_OUT}\\for webpage\\WB_map.parquet"
+    gdf.drop(columns="ID").to_parquet(outname, index=False) # Export without the ID column
     print(f"Se creó {outname}")
     
     return gdf
@@ -157,8 +157,8 @@ def genera_mapa_hc_dashboard():
     }).drop(columns="ID")
     
     # Export to CSV
-    outpath = rf"{DATA_OUT}\for webpage\HC_geo_map.csv"
-    IPUMS_country.to_csv(outpath, index=False)
+    outpath = rf"{DATA_OUT}\for webpage\HC_geo_map.parquet"
+    IPUMS_country.to_parquet(outpath, index=False)
     print(f"Se creó {outpath}")
     
     return IPUMS_country
@@ -335,6 +335,8 @@ def genera_etiquetas_hc_dashboard():
     Returns:
         None
     '''
+    raise Exception("Deprecated, do not use...")    
+    
     df = pd.read_excel(rf"{DATA_RAW}\button_labels.xlsx")
     
     outpath = rf"{DATA_OUT}\for webpage\selector_labels.csv"
@@ -342,6 +344,36 @@ def genera_etiquetas_hc_dashboard():
     print(f"Se creó {outpath}")
     
     return
+
+def genera_shocks_subnacionales_ops_dashboard():
+    ''' Genera la base de datos de shocks a nivel subnacional para el OPS Dashboard.
+    
+    La función realiza los siguientes pasos:
+        - Carga los archivos CSV que contienen datos de shocks a nivel subnacional del Climate dashboard.
+        - Agrupa los datos por códigos administrativos y calcula la media de los valores.
+        - Exporta el DataFrame resultante a un archivo CSV en {DATA_OUT}\\for webpage\\OPS_geo_data.csv.
+    
+    '''
+    import dask.dataframe as dd
+    from dask.diagnostics import ProgressBar
+    
+    results = []
+
+    for shock in ["coldwaves", "heatwaves", "intenserain", "hurricanes", "drought", "floods"]:
+        df = dd.read_csv(rf"{DATA_OUT}\for webpage\WB_{shock}.csv", blocksize="1GB", assume_missing=True)
+
+        for n in [5,10,15]:
+            df_sel = df[df.year > 2020-n]
+            result = df_sel.groupby(["adm0_code", "adm1_code", "adm2_code", "variable", "threshold", "measure"])["value"].mean()
+            result = result.reset_index()
+            result["timeframes"] = n
+            results += [result]
+
+    # Concatenate
+    results = dd.concat(results)
+
+    with ProgressBar():
+        results.to_csv(rf"{DATA_OUT}\for webpage\OPS_geo_data.csv", index=False, single_file=True)
     
 def genera_zip():
     '''Empaqueta en un archivo ZIP todos los archivos CSV del directorio {DATA_OUT}\for webpage.'''
@@ -363,14 +395,15 @@ if __name__ == "__main__":
     # genera_shocks_climate_dashboard(gdf)
     # gc.collect()
 
-    # print("Generando bases del HC Dashboard")
-    # # gdf_full = genera_mapa_hc_dashboard()
-    # # genera_shocks_nacionales_hc_dashboard(gdf_full)
-    # genera_shocks_subnacionales_hc_dashboard()
-    # gc.collect()
+    print("Generando bases del HC Dashboard")
+    gdf_full = genera_mapa_hc_dashboard()
+    genera_shocks_nacionales_hc_dashboard(gdf_full)
+    genera_shocks_subnacionales_hc_dashboard()
+    genera_shocks_subnacionales_ops_dashboard()
+    gc.collect()
 
-    # genera_zip()
-    # print("Listo! Datos exportados para las páginas web.")
+    genera_zip()
+    print("Listo! Datos exportados para las páginas web.")
     
     
     
@@ -385,11 +418,11 @@ if __name__ == "__main__":
     for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
         
         print("Verifying", shock)
-        # df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
+        df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
         
-        # test_tools.assert_correct_colnames(df)
-        # test_tools.assert_correct_shape(df, gdf)
-        # test_tools.validate_climate_dataset(df, gdf)
+        test_tools.assert_correct_colnames(df)
+        test_tools.assert_correct_shape(df, gdf)
+        test_tools.validate_climate_dataset(df, gdf)
         if shock=="floods":
             total_chunks=8**2
         elif shock=="hurricanes":
@@ -401,7 +434,7 @@ if __name__ == "__main__":
         
     print("Testing HC DATASET:")
     
-    # test_tools.validate_hc_merge()
+    test_tools.validate_hc_merge()
     for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
         
         if shock=="floods":
@@ -413,5 +446,6 @@ if __name__ == "__main__":
         print(total_chunks)
         test_tools.compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_hc_{shock}")
 
+    print("TO DO: Test the OPS_geo_data.csv")
     print("All tests passed! Check de output images")
     
