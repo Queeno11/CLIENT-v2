@@ -172,6 +172,31 @@ def load_WB_country_data():
     def hash(x, length=10):
         h = hashlib.sha256(x.encode('utf-8')).hexdigest()
         return h[:length]
+    
+    def hex8_to_uint32(col: pd.Series) -> pd.Series:
+        """
+        Convert an 8-char hexadecimal digest to a 32-bit unsigned integer.
+
+        Parameters
+        ----------
+        col : pd.Series[str]
+            Series whose non-null elements are exactly 8 hex characters
+            (e.g. 'bcaa708a').
+
+        Returns
+        -------
+        pd.Series[np.uint32]
+            Same length, with each digest replaced by its numeric value.
+            Null or malformed strings become NaN.
+        """
+        # pandas ≥ 1.3 lets you supply the base directly
+        out = col.apply(lambda x: int(x, 16) if isinstance(x, str) else np.nan)
+        # Cast to the smallest dtype that can hold 0 – 0xffffffff
+        out = out.astype("UInt32")
+        if out.duplicated().any():
+            raise ValueError("There are duplicated IDs in the dataset!! Change the hash function or increase the length of the hash string.")
+        return out
+
         
     print("Loading World Bank country data...")
     WB_country = gpd.read_file(r"D:\Datasets\World Bank Official Boundaries\World Bank Official Boundaries - Admin 2\WB_GAD_ADM2.shp")
@@ -185,9 +210,10 @@ def load_WB_country_data():
         raise ValueError("There are duplicated rows in the dataset!! Some rows have the same value of ADM2CD_c, ADM!1CD_c and ISO_A3.")
 
     WB_country["ID"] = WB_country["hash_string"].apply(lambda x: hash(x, length=8))
+    WB_country["ID"] = hex8_to_uint32(WB_country["ID"])
     if WB_country["ID"].duplicated().sum() > 0:
         raise ValueError("There are duplicated IDs in the dataset!! Increase hash_string length.")
-
+    WB_country = WB_country.drop(columns=["hash_string"])
     print("Data loaded!")
     return WB_country
 
@@ -247,27 +273,27 @@ def fix_IPUMS_conflicting_international_boundaries(wb, ipums, export_maps=False)
     print("Normalizando límites internacionales...")
     countries_to_clip = {
         # Countries with conflicting boundaries
-        "Marruecos": {"WB": 169, "IPUMS": 504},
-        "South Sudan": {"WB": 74, "IPUMS": 728},
-        "Sudan": {"WB": 6, "IPUMS": 729},
-        "Egypt": {"WB": 40765, "IPUMS": 818},
-        "Kenya": {"WB": 133, "IPUMS": 404},
-        "Russia": {"WB": 204, "IPUMS": 643},
-        "India": {"WB": 115, "IPUMS": 356},
-        "China": {"WB": 147295, "IPUMS": 156},
-        "Kyrghyzstan": {"WB": 138, "IPUMS": 417},
+        "Marruecos": {"ISO_A3": "MAR", "IPUMS": 504},
+        "South Sudan": {"ISO_A3": "SSD", "IPUMS": 728},
+        "Sudan": {"ISO_A3": "SDN", "IPUMS": 729},
+        "Egypt": {"ISO_A3": "EGY", "IPUMS": 818},
+        "Kenya": {"ISO_A3": "KEN", "IPUMS": 404},
+        "Russia": {"ISO_A3": "RUS", "IPUMS": 643},
+        "India": {"ISO_A3": "IND", "IPUMS": 356},
+        "China": {"ISO_A3": "CHN", "IPUMS": 156},
+        "Kyrghyzstan": {"ISO_A3": "KGZ", "IPUMS": 417},
     }                        
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         for country, codes in countries_to_clip.items():
-            wbcode = codes["WB"]
+            iso_code = codes["ISO_A3"]
             ipumscode = codes["IPUMS"]
             
             # Clip IPUMS using WB
             clipped = (
                 ipums[ipums.CNTRY_CODE == ipumscode]
-                .clip(wb[wb.ADM0_CODE == wbcode])
+                .clip(wb[wb.ISO_A3 == iso_code])
             )
             
             if export_maps:
