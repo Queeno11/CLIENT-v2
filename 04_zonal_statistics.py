@@ -1,5 +1,10 @@
 if __name__ == "__main__":
 
+    # Run this script to generate zonal statistics for the shocks data.
+    # It shall be run in WSL, as it requires GPU support for faster processing.
+    # Run the following script in the terminal:
+    #   python "/mnt/d/World Bank/CLIENT v2/04_zonal_statistics.py"
+    
     import os
     import gc
     import cupy as cp
