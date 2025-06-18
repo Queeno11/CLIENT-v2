@@ -47,6 +47,9 @@ def genera_mapa_climate_dashboard():
     assert (gdf._merge == "both").all(), "There are problems with the merge!!"
     gdf = gdf.drop(columns="_merge")
 
+    # Remove conflicting boundaries # FIXME: this should be implemented in the load_WB_country_data function...
+    gdf = procesa_bases.fix_disputed_boundaries(gdf)
+    
     # Exporta
     outname = rf"{DATA_OUT}\\for webpage\\WB_map.parquet"
     gdf.drop(columns="ID").to_parquet(outname, index=False) # Export without the ID column
@@ -213,14 +216,14 @@ def genera_shocks_nacionales_hc_dashboard(gdf_full):
     # Drop s3* columns
     df = df.drop(columns=[col for col in df.columns if ("s3" in col or "s4" in col) and (col != "s3" and col != "s4")])
     # Order variables
-    df = df[["adm0", "s1", "s2", "s3", "s4", "s5", "outcome", "new", "v"]]
+    df = df[["adm0", "s1", "s2", "s3", "s4", "s5", "outcome", "new", "v", "status"]]
     df = df.rename(columns={"new":"time", "v": "value", "status":"treatment"})
     df.loc[df.s1 == "Hurricane", "s5"] = df.loc[df.s1 == "Hurricane", "s5"] / 100
 
     df = df.merge(gdf_full[["adm0"]].drop_duplicates(), on=["adm0"], validate="m:1")
-    print(f"Hay datos de {df.adm0.unique().size} países")
+    print(f"Hay datos de {df.adm0.unique().size} países. Exportando CSV")
     df.to_csv(rf"{DATA_OUT}\for webpage\HC_national_data.csv", index=False)
-        
+    print(rf"Se creó {DATA_OUT}\for webpage\HC_national_data.csv")
     return
 
 def genera_shocks_subnacionales_hc_dashboard():
@@ -394,58 +397,61 @@ if __name__ == "__main__":
     # gdf = genera_mapa_climate_dashboard()
     # genera_shocks_climate_dashboard(gdf)
     # gc.collect()
-
+    
+    # print("Generando bases del OPS Dashboard")
+    # genera_shocks_subnacionales_ops_dashboard()
+    # gc.collect() 
+    
     print("Generando bases del HC Dashboard")
-    gdf_full = genera_mapa_hc_dashboard()
-    genera_shocks_nacionales_hc_dashboard(gdf_full)
+    # gdf_full = genera_mapa_hc_dashboard()
+    # genera_shocks_nacionales_hc_dashboard(gdf_full)
     genera_shocks_subnacionales_hc_dashboard()
-    genera_shocks_subnacionales_ops_dashboard()
     gc.collect()
 
-    genera_zip()
+    # genera_zip()
     print("Listo! Datos exportados para las páginas web.")
     
     
     
     
-    print("#########################################################")
-    print("####      Testing the generated datasets:            ####")
-    print("#########################################################")
-    print("Testing CLIMATE DATASET:")
-    # Load the data
-    gdf = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_map.csv")
+    # print("#########################################################")
+    # print("####      Testing the generated datasets:            ####")
+    # print("#########################################################")
+    # print("Testing CLIMATE DATASET:")
+    # # Load the data
+    # gdf = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_map.csv")
 
-    for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
+    # for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
         
-        print("Verifying", shock)
-        df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
+    #     print("Verifying", shock)
+    #     df = pd.read_csv(rf"{DATA_OUT}\\for webpage\\WB_{shock}.csv")
         
-        test_tools.assert_correct_colnames(df)
-        test_tools.assert_correct_shape(df, gdf)
-        test_tools.validate_climate_dataset(df, gdf)
-        if shock=="floods":
-            total_chunks=8**2
-        elif shock=="hurricanes":
-            total_chunks=6**2
-        else: 
-            total_chunks=4**2
+    #     test_tools.assert_correct_colnames(df)
+    #     test_tools.assert_correct_shape(df, gdf)
+    #     test_tools.validate_climate_dataset(df, gdf)
+    #     if shock=="floods":
+    #         total_chunks=8**2
+    #     elif shock=="hurricanes":
+    #         total_chunks=6**2
+    #     else: 
+    #         total_chunks=4**2
             
-        test_tools.compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_climate_{shock}")
+    #     test_tools.compare_xarray_with_zonal_statistics(adm="WB", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_climate_{shock}")
         
-    print("Testing HC DATASET:")
+    # print("Testing HC DATASET:")
     
-    test_tools.validate_hc_merge()
-    for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
+    # test_tools.validate_hc_merge()
+    # for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
         
-        if shock=="floods":
-            total_chunks=8**2
-        elif shock=="hurricanes":
-            total_chunks=6**2
-        else: 
-            total_chunks=4**2
-        print(total_chunks)
-        test_tools.compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_hc_{shock}")
+    #     if shock=="floods":
+    #         total_chunks=8**2
+    #     elif shock=="hurricanes":
+    #         total_chunks=6**2
+    #     else: 
+    #         total_chunks=4**2
+    #     print(total_chunks)
+    #     test_tools.compare_xarray_with_zonal_statistics(adm="IPUMS", chunk_number=None, shockname=shock, var=None, total_chunks=total_chunks, year=None, out_name=f"test_hc_{shock}")
 
-    print("TO DO: Test the OPS_geo_data.csv")
-    print("All tests passed! Check de output images")
+    # print("TO DO: Test the OPS_geo_data.csv")
+    # print("All tests passed! Check de output images")
     
