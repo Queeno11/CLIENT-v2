@@ -167,24 +167,27 @@ def open_IPUMS(force_geolev1):
     return gdf
 
 def load_WB_country_data():
-    print("Loading World Bank country data...")
-    WB_country = gpd.read_file(rf"{DATA_RAW}\world_bank_adm2\world_bank_adm2.shp")
-    
-    # Assign nan when ADM2 is not available 
-    WB_country.loc[WB_country.ADM2_NAME == "Administrative unit not available", "ADM2_CODE"] = (
-        np.nan
-    )
-    
-    # Create ADM_LAST variable: ADM2_NAME if available, else ADM1_NAME
-    for col in ["ADM0_CODE", "ADM1_CODE", "ADM2_CODE"]:
-        WB_country[col] = WB_country[col].fillna(0)
+    import hashlib
 
-    # Dissolve by ADM_LAST and country code    
-    WB_country = WB_country.dissolve(by=["ADM2_CODE","ADM1_CODE", "ADM0_CODE"]).reset_index()
-    
-    # # Create ID
-    WB_country["ID"] = WB_country.groupby(["ADM2_CODE", "ADM1_CODE", "ADM0_CODE"]).ngroup()
-    assert WB_country.ID.nunique() == WB_country.shape[0], "ID is not unique!, there's some bug in the code..."
+    def hash(x, length=10):
+        h = hashlib.sha256(x.encode('utf-8')).hexdigest()
+        return h[:length]
+        
+    print("Loading World Bank country data...")
+    WB_country = gpd.read_file(r"D:\Datasets\World Bank Official Boundaries\World Bank Official Boundaries - Admin 2\WB_GAD_ADM2.shp")
+
+    # Keep relevant cols
+    WB_country = WB_country[["ISO_A3", "NAM_0", "NAM_1", "NAM_2", "ADM1CD_c", "ADM2CD_c", "geometry"]]
+
+    # Create ID (hash SHA-256 from the concatenation of "ADM2CD_c" "ADM1CD_c" and "ISO_A3"
+    WB_country["hash_string"] = WB_country["ADM2CD_c"].astype(str) + "_" + WB_country["ADM1CD_c"].astype(str) + "_" + WB_country["ISO_A3"].astype(str)
+    if WB_country["hash_string"].duplicated().sum() > 0:
+        raise ValueError("There are duplicated rows in the dataset!! Some rows have the same value of ADM2CD_c, ADM!1CD_c and ISO_A3.")
+
+    WB_country["ID"] = WB_country["hash_string"].apply(lambda x: hash(x, length=8))
+    if WB_country["ID"].duplicated().sum() > 0:
+        raise ValueError("There are duplicated IDs in the dataset!! Increase hash_string length.")
+
     print("Data loaded!")
     return WB_country
 
@@ -331,3 +334,24 @@ def fix_encoding(text):
     except (UnicodeEncodeError, UnicodeDecodeError):
         return text  # If it fails, return original
     
+def fix_disputed_boundaries(gdf):
+    ''' This function removes the disputed boundaries from the original dataset.
+    
+    The disputed boundaries are the ones from WB_GAD_Disputes.shp. Each polygon in the orginal geodataframe 
+    is checked against the disputed boundaries. If the polygon intersects with the disputed boundaries, it is clipped
+    to the disputed boundaries (gpd.difference()). The function returns a new geodataframe with the disputed boundaries removed.
+    '''
+    
+    disputed_boundaries = gpd.read_file(rf"{DATA_RAW}\WB_GAD_Disputes\WB_GAD_Disputes.shp")
+
+    # Fix the geometry of the disputed boundaries 
+    ilemi_triangle = disputed_boundaries.loc[disputed_boundaries["objectid"]==2, "geometry"] 
+    disputed_boundaries.loc[disputed_boundaries["objectid"]==2, "geometry"] = ilemi_triangle.buffer(0.01) # Fix small broken geometry
+
+    # Make one large polygon for the disputed boundaries
+    disputed_boundaries = disputed_boundaries.dissolve().geometry[0]
+
+    # Remove the disputed boundaries from the original dataset
+    gdf["geometry"] = gdf.difference(disputed_boundaries)
+
+    return gdf
