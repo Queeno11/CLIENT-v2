@@ -167,36 +167,6 @@ def open_IPUMS(force_geolev1):
     return gdf
 
 def load_WB_country_data():
-    import hashlib
-
-    def hash(x, length=10):
-        h = hashlib.sha256(x.encode('utf-8')).hexdigest()
-        return h[:length]
-    
-    def hex8_to_uint32(col: pd.Series) -> pd.Series:
-        """
-        Convert an 8-char hexadecimal digest to a 32-bit unsigned integer.
-
-        Parameters
-        ----------
-        col : pd.Series[str]
-            Series whose non-null elements are exactly 8 hex characters
-            (e.g. 'bcaa708a').
-
-        Returns
-        -------
-        pd.Series[np.uint32]
-            Same length, with each digest replaced by its numeric value.
-            Null or malformed strings become NaN.
-        """
-        # pandas ≥ 1.3 lets you supply the base directly
-        out = col.apply(lambda x: int(x, 16) if isinstance(x, str) else np.nan)
-        # Cast to the smallest dtype that can hold 0 – 0xffffffff
-        out = out.astype("UInt32")
-        if out.duplicated().any():
-            raise ValueError("There are duplicated IDs in the dataset!! Change the hash function or increase the length of the hash string.")
-        return out
-
         
     print("Loading World Bank country data...")
     WB_country = gpd.read_file(r"D:\Datasets\World Bank Official Boundaries\World Bank Official Boundaries - Admin 2\WB_GAD_ADM2.shp")
@@ -205,15 +175,11 @@ def load_WB_country_data():
     WB_country = WB_country[["ISO_A3", "NAM_0", "NAM_1", "NAM_2", "ADM1CD_c", "ADM2CD_c", "geometry"]]
 
     # Create ID (hash SHA-256 from the concatenation of "ADM2CD_c" "ADM1CD_c" and "ISO_A3"
-    WB_country["hash_string"] = WB_country["ADM2CD_c"].astype(str) + "_" + WB_country["ADM1CD_c"].astype(str) + "_" + WB_country["ISO_A3"].astype(str)
-    if WB_country["hash_string"].duplicated().sum() > 0:
-        raise ValueError("There are duplicated rows in the dataset!! Some rows have the same value of ADM2CD_c, ADM!1CD_c and ISO_A3.")
+    WB_country["ID"] = WB_country.groupby(["ISO_A3", "ADM1CD_c", "ADM2CD_c"]).ngroup()
 
-    WB_country["ID"] = WB_country["hash_string"].apply(lambda x: hash(x, length=8))
-    WB_country["ID"] = hex8_to_uint32(WB_country["ID"])
     if WB_country["ID"].duplicated().sum() > 0:
         raise ValueError("There are duplicated IDs in the dataset!! Increase hash_string length.")
-    WB_country = WB_country.drop(columns=["hash_string"])
+
     print("Data loaded!")
     return WB_country
 
