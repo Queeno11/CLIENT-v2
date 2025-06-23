@@ -35,16 +35,16 @@ if __name__ == "__main__":
     WB_data = gpd.read_feather(rf"{DATA_PROC}/WB_country_IDs.feather")
     IPUMS_data = gpd.read_feather(rf"{DATA_PROC}/IPUMS_country_IDs.feather")
     gdfs = {
-        # "IPUMS": IPUMS_data,
-        "WB": WB_data,
+        # "WB": WB_data,
+        "IPUMS": IPUMS_data,
     }
 
     # ADM boundaries data (load the full dataset because I'll iterate over it all the times)
     WB_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/WB_country_grid.nc", chunks="auto")["ID"]
     IPUMS_adm_id_full = xr.open_dataset(rf"{DATA_PROC}/IPUMS_country_grid.nc", chunks="auto")["ID"]
     adm_grids = {
-        # "IPUMS": IPUMS_adm_id_full,
-        "WB": WB_adm_id_full,
+        # "WB": WB_adm_id_full,
+        "IPUMS": IPUMS_adm_id_full,
     }
 
     ### Shocks
@@ -59,16 +59,16 @@ if __name__ == "__main__":
     #   - The grid has to be ascending in x and descending in y.
     #   - It is recommended to chunk the grid in the same way as the data is stored (lat-lon)
 
+    floods = xr.open_dataset(rf"{PATH}/Data/Data_out/GFD_floods_yearly.nc", chunks="auto").rename(
+        {"band_data": "flooded"}
+    ).astype(bool)
+    droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc", chunks="auto").drop_duplicates(
+        dim="x"
+    )
     hurricanes = xr.open_dataset(rf"{DATA_OUT}/IBTrACS_hurricanes_yearly.nc", chunks="auto")
     heatwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_heatwaves_yearly.nc", chunks="auto")
     coldwaves = xr.open_dataset(rf"{DATA_OUT}/CCKP_coldwaves_yearly.nc", chunks="auto")
     intenserain = xr.open_dataset(rf"{DATA_OUT}/CCKP_intenserain_yearly.nc", chunks="auto")
-    droughts = xr.open_dataset(rf"{DATA_OUT}/ERA5_droughts_yearly.nc", chunks="auto").drop_duplicates(
-        dim="x"
-    )
-    floods = xr.open_dataset(rf"{PATH}/Data/Data_out/GFD_floods_yearly.nc", chunks="auto").rename(
-        {"band_data": "flooded"}
-    )
 
     shocks = {
         "floods": {"ds": floods, "chunks": 8**2},
@@ -89,6 +89,7 @@ if __name__ == "__main__":
             .astype(int)
             .load()
         )
+        print(f"ADM ID full loaded!")
         # Create chunks_path if it doesn't exist
         chunks_path = os.path.join(PARQUET_PATH, admname)
         os.makedirs(chunks_path, exist_ok=True)
