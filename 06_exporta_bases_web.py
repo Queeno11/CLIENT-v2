@@ -3,11 +3,14 @@ import os
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from tqdm import tqdm
 
 import utils
 import test_tools
 import procesa_bases
+
+import dask.dataframe as dd
+from dask.distributed import Client
+from dask.diagnostics import ProgressBar
 
 PATH = r"D:\World Bank\CLIENT v2"
 DATA_RAW = rf"{PATH}\Data\Data_raw"
@@ -55,7 +58,7 @@ def genera_mapa_climate_dashboard():
             "NAM_2": "adm2_name",
         }
     )
-    print(gdf.columns)
+
     # Remove conflicting boundaries # FIXME: this should be implemented in the load_WB_country_data function...
     gdf = procesa_bases.fix_disputed_boundaries(gdf)
     
@@ -93,13 +96,13 @@ def genera_shocks_climate_dashboard(gdf):
     dtypes = {"year": np.int16, "variable":"category", "threshold":"category", "area_affected":np.float32, "population_affected":np.float32, "ID":np.int64}# "adm2_code": np.int16, "adm1_code": np.int16, "adm0_code": np.int16,
 
     for shock in ["floods", "drought", "hurricanes", "intenserain", "heatwaves", "coldwaves"]:
-        print(shock)
+        print(f"Procesando {shock}...")
         df = pd.read_csv(
             rf"{DATA_OUT}\\WB_{shock}_long.csv",
             dtype=dtypes, 
             usecols=dtypes.keys(),
         )
-            
+
         # Set ID to categorical dtype (this is after loading as int to match with the categories of gdf)
         df["ID"] = df["ID"].astype("category")
         
@@ -254,9 +257,6 @@ def genera_shocks_subnacionales_hc_dashboard():
     Returns:
         None
     '''
-    import dask
-    import dask.dataframe as dd
-    from dask.distributed import Client
         
     client = Client()
 
@@ -365,8 +365,6 @@ def genera_shocks_subnacionales_ops_dashboard():
         - Exporta el DataFrame resultante a un archivo CSV en {DATA_OUT}\\for webpage\\OPS_geo_data.csv.
     
     '''
-    import dask.dataframe as dd
-    from dask.diagnostics import ProgressBar
     
     results = []
 
@@ -386,7 +384,7 @@ def genera_shocks_subnacionales_ops_dashboard():
     with ProgressBar():
         results.to_csv(rf"{DATA_OUT}\for webpage\OPS_geo_data.csv", index=False, single_file=True)
     
-def genera_zip():
+def genera_zip(db):
     '''Empaqueta en un archivo ZIP todos los archivos CSV del directorio {DATA_OUT}\for webpage.'''
 
     import zipfile
@@ -394,10 +392,32 @@ def genera_zip():
     path = rf"{DATA_OUT}\for webpage"
     files = os.listdir(path)
     files = [f for f in files if f.endswith(".csv")]
+
+    today = pd.Timestamp.now().strftime("%Y.%m.%d")
     
-    with zipfile.ZipFile(rf"{DATA_OUT}\for webpage\HC_data.zip", "w") as zipf:
-        for file in files:
-            zipf.write(rf"{path}\{file}", arcname=file)
+    if db=="climate":
+        print("Exporting Climate data...")
+        files = [f for f in files if f.startswith("WB_")]
+        filename = rf"{DATA_OUT}\for webpage\for webpage - Climate v{today}.zip"
+    
+    elif db=="ops":
+        print("Exporting OPS data...")
+        files = [f for f in files if f.startswith("OPS_")]
+        filename = rf"{DATA_OUT}\for webpage\for webpage - OPS v{today}.zip"
+    
+    elif db=="hc":
+        print("Exporting HC data...")
+        files = [f for f in files if f.startswith("HC_")]
+        filename = rf"{DATA_OUT}\for webpage\for webpage - HC v{today}.zip"
+    
+    else: 
+        raise ValueError("Invalid database choice. Choose 'climate', 'ops' or 'hc'.")
+        
+    print(filename)
+    # with zipfile.ZipFile(rf"{DATA_OUT}\for webpage\HC_data.zip", "w") as zipf:
+    #     for file in files:
+    #         zipf.write(rf"{path}\{file}", arcname=file)
+
 
 if __name__ == "__main__":
     import argparse
@@ -406,26 +426,28 @@ if __name__ == "__main__":
     parser.add_argument("--db", choices=["climate", "ops", "hc", "all"], default="all", required=True, help="Choose the database to run: climate, ops, or hc")
 
     args = parser.parse_args()
-
-    if (args.db == "climate") | (args.db == "all"):
+    db = args.db
+    if (db == "climate") | (db == "all"):
         print("Generando bases del Climate Dashboard")
         gdf = genera_mapa_climate_dashboard()
         genera_shocks_climate_dashboard(gdf)
+        genera_zip(db="climate")
         gc.collect()
     
-    if (args.db == "ops") | (args.db == "all"):
+    if (db == "ops") | (db == "all"):
         print("Generando bases del OPS Dashboard")
         genera_shocks_subnacionales_ops_dashboard()
+        genera_zip(db="ops")
         gc.collect() 
     
-    if (args.db == "hc") | (args.db == "all"):
+    if (db == "hc") | (db == "all"):
         print("Generando bases del HC Dashboard")
         gdf_full = genera_mapa_hc_dashboard()
         genera_shocks_nacionales_hc_dashboard(gdf_full)
         genera_shocks_subnacionales_hc_dashboard()
+        genera_zip(db="hc")
         gc.collect()
 
-    # genera_zip()
     print("Listo! Datos exportados para las páginas web.")    
     
     print("#########################################################")
